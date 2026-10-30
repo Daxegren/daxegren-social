@@ -55,7 +55,13 @@ export class MemoryStore implements Store {
     const existing = [...this.posts.values()].find(
       (p) => p.channel === post.channel && p.externalId === post.externalId,
     );
-    const stored = structuredClone({ ...post, id: existing?.id ?? post.id });
+    // Same merge rule as PostgresStore: keep provenance and metrics the incoming post does not carry.
+    const stored = structuredClone({
+      ...post,
+      id: existing?.id ?? post.id,
+      metrics: post.metrics ?? existing?.metrics,
+      variantId: post.variantId ?? existing?.variantId,
+    });
     this.posts.set(stored.id, stored);
     return structuredClone(stored);
   }

@@ -11,13 +11,18 @@
       "default": "./dist/index.js"
     }
   },
-  "files": ["dist", "db"],
+  "files": [
+    "dist",
+    "db"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "prepare": "npm run build"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.13",
     "@types/node": "^22.0.0",
     "typescript": "^5.6.0",
     "vitest": "^2.1.0"

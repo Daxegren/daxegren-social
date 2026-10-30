@@ -1,6 +1,7 @@
 export * from "./domain.js";
 export * from "./channels.js";
 export * from "./store.js";
+export * from "./postgres-store.js";
 export * from "./analyze.js";
 export * from "./generate.js";
 export * from "./scheduler.js";

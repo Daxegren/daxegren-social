@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import type { Asset, ContentBrief, PostVariant, PublishedPost } from "../src/domain.js";
+import type { Asset, ContentBrief, MediaJob, PostVariant, PublishedPost } from "../src/domain.js";
 import { ContentEngine } from "../src/engine.js";
 import { PostgresStore } from "../src/postgres-store.js";
 import { MemoryStore, type Store } from "../src/store.js";
@@ -84,6 +84,29 @@ describe.each(makers)("Store contract: %s", (_name, make) => {
     expect(results.filter(Boolean)).toHaveLength(1);
     expect((await store.getVariant(v.id))!.status).toBe("publishing");
     expect(await store.transitionVariant(v.id, "scheduled", "publishing")).toBeUndefined();
+  });
+
+  it("round-trips media jobs, filters by status, and sums committed spend (actual cost beats estimate)", async () => {
+    const job = (over: Partial<MediaJob> = {}): MediaJob => ({
+      id: uuid(), kind: "video", provider: "p", model: "m", prompt: "x", status: "queued", estimatedCostUsd: 0.1, createdAt: T, ...over,
+    });
+    const assetId = uuid();
+    await store.putAsset({ id: assetId, kind: "video", origin: "generated", uri: "https://x.test/v.mp4", createdAt: T });
+    const full = job({ status: "completed", providerJobId: "pj", sourceImageUri: "https://x.test/i.jpg", actualCostUsd: 0.07, assetId, finishedAt: T });
+    const free = job({ status: "failed", error: "nsfw", actualCostUsd: 0 });
+    const running = job({ status: "in_progress", providerJobId: "pj2", estimatedCostUsd: 0.25 });
+    const lastMonth = job({ createdAt: "2026-10-15T00:00:00.000Z", estimatedCostUsd: 9 });
+    for (const j of [full, free, running, lastMonth]) await store.putMediaJob(j);
+
+    expect(await store.getMediaJob(full.id)).toEqual(full);
+    expect(await store.getMediaJob(free.id)).toEqual(free);
+    expect(await store.getMediaJob(uuid())).toBeUndefined();
+    expect((await store.listMediaJobs({ statuses: ["queued", "in_progress"] })).map((j) => j.id).sort()).toEqual([lastMonth.id, running.id].sort());
+    expect(await store.listMediaJobs()).toHaveLength(4);
+    expect(await store.mediaSpendUsd("2026-11-01T00:00:00.000Z")).toBeCloseTo(0.07 + 0 + 0.25);
+
+    await store.putMediaJob({ ...running, status: "completed", actualCostUsd: 0.2 });
+    expect((await store.getMediaJob(running.id))!.status).toBe("completed");
   });
 
   it("upsertPost is keyed on (channel, externalId) and keeps id, metrics and provenance", async () => {

@@ -89,3 +89,25 @@ export interface PostVariant {
   publishedAt?: string;
   createdAt: string;
 }
+
+export type MediaJobStatus = "queued" | "in_progress" | "completed" | "failed";
+
+/** A paid, asynchronous media generation (video). Persisted before spending so a result can never be lost. */
+export interface MediaJob {
+  id: string;
+  kind: "video";
+  provider: string;
+  model: string;
+  prompt: string;
+  sourceImageUri?: string;
+  providerJobId?: string;
+  status: MediaJobStatus;
+  estimatedCostUsd: number;
+  /** Provider-reported cost, or 0 for a failed job. The cost counted against the cap is `actual ?? estimated`. */
+  actualCostUsd?: number;
+  /** The generated Asset (same id as the job). Set when completed. */
+  assetId?: string;
+  error?: string;
+  createdAt: string;
+  finishedAt?: string;
+}

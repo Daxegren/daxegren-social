@@ -8,6 +8,7 @@ on:
       channels: { description: "Comma separated, e.g. linkedin,instagram", required: true, default: "linkedin,instagram" }
       angle: { description: "Angle (optional)", required: false }
       goal: { description: "Goal (optional)", required: false }
+      assets: { description: "Asset ids to attach, comma separated (optional; from add-asset / Generate video)", required: false }
 concurrency:
   group: social-worker
   cancel-in-progress: false
@@ -23,12 +24,13 @@ jobs:
       - run: npm ci
       - run: npm run build
       # Inputs go through env vars, never interpolated into the shell command.
-      - run: node dist/worker/main.js generate "$IDEA" --channels "$CHANNELS" ${ANGLE:+--angle "$ANGLE"} ${GOAL:+--goal "$GOAL"}
+      - run: node dist/worker/main.js generate "$IDEA" --channels "$CHANNELS" ${ANGLE:+--angle "$ANGLE"} ${GOAL:+--goal "$GOAL"} ${ASSETS:+--assets "$ASSETS"}
         env:
           IDEA: ${{ inputs.idea }}
           CHANNELS: ${{ inputs.channels }}
           ANGLE: ${{ inputs.angle }}
           GOAL: ${{ inputs.goal }}
+          ASSETS: ${{ inputs.assets }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           INSTAGRAM_USER_ID: ${{ secrets.INSTAGRAM_USER_ID }}

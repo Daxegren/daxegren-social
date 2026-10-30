@@ -1,5 +1,7 @@
+import { HiggsfieldVideoGenerator } from "../adapters/higgsfield.js";
 import { InstagramAdapter } from "../adapters/instagram.js";
 import { LinkedInAdapter } from "../adapters/linkedin.js";
+import { SupabaseStorage } from "../adapters/supabase-storage.js";
 import type { ChannelAdapter, FetchLike } from "../adapters/types.js";
 import { CHANNELS, type Channel } from "../domain.js";
 import { ContentEngine } from "../engine.js";
@@ -41,8 +43,24 @@ export function buildEngine(env: Env, store: Store, opts: { fetch?: FetchLike; n
       return c as Channel;
     });
 
+  const cap = env.MEDIA_MONTHLY_CAP_USD ? Number(env.MEDIA_MONTHLY_CAP_USD) : undefined;
+  if (cap !== undefined && !(cap >= 0)) throw new Error(`MEDIA_MONTHLY_CAP_USD must be a number, got "${env.MEDIA_MONTHLY_CAP_USD}"`);
+
   return {
-    engine: new ContentEngine({ store, adapters, generator, autoApprove, now: opts.now }),
+    engine: new ContentEngine({
+      store,
+      adapters,
+      generator,
+      autoApprove,
+      now: opts.now,
+      fetch: opts.fetch,
+      mediaMonthlyCapUsd: cap,
+      videoGenerator: env.HIGGSFIELD_API_KEY ? new HiggsfieldVideoGenerator({ apiKey: env.HIGGSFIELD_API_KEY, fetch: opts.fetch }) : undefined,
+      mediaStorage:
+        env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY
+          ? new SupabaseStorage({ url: env.SUPABASE_URL, serviceRoleKey: env.SUPABASE_SERVICE_ROLE_KEY, bucket: env.SOCIAL_MEDIA_BUCKET, fetch: opts.fetch })
+          : undefined,
+    }),
     configuredChannels: Object.keys(adapters) as Channel[],
   };
 }

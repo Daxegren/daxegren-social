@@ -216,17 +216,4 @@ describe("assets", () => {
     expect((await e2.tick()).published).toEqual([v!.id]);
     expect(instagram.published[0]!.assetIds).toEqual([photo.id]);
   });
-
-  it("generateAsset stores the result as generated", async () => {
-    const store = new MemoryStore();
-    const engine = new ContentEngine({
-      store,
-      adapters: {},
-      generator: new FakeGenerator(),
-      mediaGenerator: { generate: async () => ({ uri: "https://cdn.example.test/gen.png" }) },
-    });
-    const asset = await engine.generateAsset({ kind: "image", prompt: "a lighthouse" });
-    expect(asset.origin).toBe("generated");
-    expect((await store.getAssets([asset.id]))[0]!.meta).toMatchObject({ prompt: "a lighthouse" });
-  });
 });

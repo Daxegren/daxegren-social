@@ -33,7 +33,8 @@ One repository, `@daxegren/social-engine`, standalone:
 | Store | `src/store.ts`, `src/postgres-store.ts` | Persistence interface; in-memory and Postgres implementations (same contract tests) |
 | Adapters | `src/adapters/*` | One per channel: publish, ingest, metrics. Only place with platform specifics |
 | Analysis | `src/analyze.ts` | Engagement rate, best hours, length/media performance, time suggestion |
-| Generation | `src/generate.ts` | `ContentGenerator` (Claude implementation) and `MediaGenerator` interface |
+| Generation | `src/generate.ts` | `ContentGenerator` (Claude implementation) |
+| Media | `src/media.ts`, `src/adapters/higgsfield.ts`, `src/adapters/supabase-storage.ts` | Paid video generation as persisted jobs: estimate, monthly cap, submit, poll, copy to durable storage, register as an `Asset` |
 | Scheduler | `src/scheduler.ts` | Claims due variants atomically, validates, publishes, retries with backoff |
 | Engine | `src/engine.ts` | Orchestrates everything above |
 | Worker | `src/worker/*` | Wires the engine from environment variables; CLI and migrations |
@@ -47,6 +48,9 @@ One repository, `@daxegren/social-engine`, standalone:
   network call. If a worker dies mid-publish the variant stays `publishing` and needs a manual look,
   because retrying automatically could duplicate a post that actually went out.
 - **Retryable vs permanent errors.** 429/5xx/network errors retry with backoff; other 4xx fail immediately.
+- **Paid work is persisted before it is paid for.** A media job row exists before the provider is called, and the
+  provider's job id is saved right after submitting, so a finished clip can always be collected by a later `tick`.
+  The asset reuses the job's id, so collecting twice cannot duplicate it.
 - **Own and generated media are the same thing to the engine.** Both are `Asset`s; only `origin` differs.
   Anything with a public https URL can be attached.
 - **Ingestion fallback.** Where a platform's API does not expose your history (LinkedIn without restricted
@@ -60,7 +64,10 @@ One repository, `@daxegren/social-engine`, standalone:
 | LinkedIn | text, one image | via `importPosts` | no |
 | Facebook, TikTok, Pinterest, YouTube, X, Snapchat | not yet — implement `ChannelAdapter` | | |
 
-Not built yet: a `MediaGenerator` implementation, Instagram carousels and richer insights (reach/saves), video
+Video generation is ported from the `content.generate.media` capability in Ecomduct CoPilot (Higgsfield). Image
+generation is not: that implementation calls the Lovable AI Gateway, which only works inside Lovable.
+
+Not built yet: image generation, Instagram carousels and richer insights (reach/saves), video
 upload flows for the other channels, recovery of variants stranded in `publishing`. Platform limits in
 `channels.ts` and API versions in the adapters should be checked against current platform documentation before
 production use.

@@ -11,12 +11,16 @@ export const USAGE = `usage: social <command>
   tick                                      publish everything that is due
   ingest <channel>                          read published posts from a channel
   refresh-metrics <channel>                 update metrics on known posts
+  add-asset <image|video> <https-url>       register a photo or video you made yourself; prints its id
+  media video "<prompt>"                    generate a video (costs money; capped per month)
+           [--source <https image url>] [--model <id>] [--async]
   generate "<idea>" --channels a,b          create a brief and draft one variant per channel
-           [--angle <text>] [--goal <text>]
+           [--angle <text>] [--goal <text>] [--assets id,id]
 `;
 
 export interface CliDeps {
   env: Env;
+  sleep?: (ms: number) => Promise<void>;
   sql: SqlClient;
   fetch?: FetchLike;
   now?: () => Date;
@@ -36,6 +40,10 @@ export async function runCli(argv: string[], deps: CliDeps): Promise<string> {
       channels: { type: "string" },
       angle: { type: "string" },
       goal: { type: "string" },
+      assets: { type: "string" },
+      source: { type: "string" },
+      model: { type: "string" },
+      async: { type: "boolean" },
     },
   });
   const [command, ...rest] = positionals;
@@ -54,12 +62,28 @@ export async function runCli(argv: string[], deps: CliDeps): Promise<string> {
       const channel = channelArg(rest[0]);
       return `updated metrics on ${await engine.refreshMetrics(channel)} posts on ${channel}`;
     }
+    case "add-asset": {
+      const [kind, uri] = rest;
+      if ((kind !== "image" && kind !== "video") || !uri) throw new Error("usage: add-asset <image|video> <https-url>");
+      if (!uri.startsWith("https://")) throw new Error("the asset must be a public https URL");
+      return (await engine.addCapturedAsset(kind, uri)).id;
+    }
+    case "media": {
+      if (rest[0] !== "video" || !rest[1]) throw new Error('usage: media video "<prompt>" [--source <https image url>] [--model <id>] [--async]');
+      const job = await engine.startVideo({ prompt: rest[1], sourceImageUri: values.source, model: values.model });
+      if (values.async) return `job ${job.id} started (estimated ${job.estimatedCostUsd.toFixed(2)} USD); \`tick\` collects it when ready`;
+      const done = await engine.waitForJob(job.id, { sleep: deps.sleep });
+      if (done.status === "completed") return `asset ${done.assetId}`;
+      if (done.status === "failed") throw new Error(`video generation failed: ${done.error}`);
+      return `job ${done.id} is still running (estimated ${done.estimatedCostUsd.toFixed(2)} USD); \`tick\` collects it when ready`;
+    }
     case "generate": {
       const idea = rest[0];
       if (!idea) throw new Error('generate needs an idea: social generate "<idea>" --channels linkedin,instagram');
       const channels = (values.channels ?? configuredChannels.join(",")).split(",").filter(Boolean).map(channelArg);
       if (channels.length === 0) throw new Error("no channels given and none configured");
-      const brief = await engine.createBrief({ idea, angle: values.angle, goal: values.goal });
+      const assetIds = (values.assets ?? "").split(",").filter(Boolean);
+      const brief = await engine.createBrief({ idea, angle: values.angle, goal: values.goal, assetIds });
       const drafts = await engine.proposeVariants(brief.id, channels);
       return drafts.map((d) => `${d.channel}\t${d.status}\t${d.id}`).join("\n") || "generator returned no variants";
     }

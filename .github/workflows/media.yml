@@ -1,0 +1,42 @@
+name: Generate video
+# Costs money. Starts a Higgsfield video job, waits for it, stores the file in Supabase Storage and prints the
+# asset id to use under "Generate drafts". Refuses to start when MEDIA_MONTHLY_CAP_USD (default 50) would be exceeded.
+on:
+  workflow_dispatch:
+    inputs:
+      prompt: { description: "What should happen in the clip?", required: true }
+      source: { description: "Public https URL of the source image (not needed for Seedance text-to-video)", required: false }
+      model:
+        description: "Model"
+        required: true
+        type: choice
+        default: kling-video/v2.5-turbo/standard/image-to-video
+        options:
+          - kling-video/v2.5-turbo/standard/image-to-video
+          - minimax/hailuo-2.3/standard/image-to-video
+          - kling-video/v3.0-turbo/image-to-video
+          - bytedance/seedance-2.0/text-to-video
+concurrency:
+  group: social-worker
+  cancel-in-progress: false
+jobs:
+  video:
+    if: ${{ vars.SOCIAL_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npm run build
+      - run: node dist/worker/main.js media video "$PROMPT" --model "$MODEL" ${SOURCE:+--source "$SOURCE"}
+        env:
+          PROMPT: ${{ inputs.prompt }}
+          SOURCE: ${{ inputs.source }}
+          MODEL: ${{ inputs.model }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          HIGGSFIELD_API_KEY: ${{ secrets.HIGGSFIELD_API_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          MEDIA_MONTHLY_CAP_USD: ${{ vars.MEDIA_MONTHLY_CAP_USD }}

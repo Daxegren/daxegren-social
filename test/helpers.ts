@@ -63,3 +63,38 @@ export function mockFetch(routes: Array<{ match: (url: string, init?: RequestIni
 
 export const json = (body: unknown, init?: ResponseInit) =>
   new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" }, ...init });
+
+import type { MediaCost, MediaStorage, VideoGenerator, VideoJobState, VideoRequest } from "../src/media.js";
+
+export class FakeVideoGenerator implements VideoGenerator {
+  readonly provider = "fake";
+  submitted: VideoRequest[] = [];
+  estimateUsd = 0.1;
+  /** What status() returns, in order; the last one repeats. */
+  states: VideoJobState[] = [{ status: "completed", videoUrl: "https://provider.test/v.mp4" }];
+  submitError?: Error;
+  statusError?: Error;
+
+  async estimate(): Promise<MediaCost> {
+    return { usd: this.estimateUsd, isEstimate: true, source: "fake" };
+  }
+
+  async submit(req: VideoRequest) {
+    if (this.submitError) throw this.submitError;
+    this.submitted.push(req);
+    return { providerJobId: `job-${this.submitted.length}-abcdefgh` };
+  }
+
+  async status(): Promise<VideoJobState> {
+    if (this.statusError) throw this.statusError;
+    return this.states.length > 1 ? this.states.shift()! : this.states[0]!;
+  }
+}
+
+export class MemoryStorage implements MediaStorage {
+  files = new Map<string, { bytes: Uint8Array; mimeType: string }>();
+  async put(path: string, bytes: Uint8Array, mimeType: string) {
+    this.files.set(path, { bytes, mimeType });
+    return `https://storage.test/public/${path}`;
+  }
+}

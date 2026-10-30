@@ -3,6 +3,8 @@ import type {
   AssetKind,
   Channel,
   ContentBrief,
+  MediaJob,
+  MediaJobStatus,
   Metrics,
   PostVariant,
   PublishedPost,
@@ -72,6 +74,25 @@ function toVariant(r: Row): PostVariant {
     url: opt(r.url),
     publishedAt: iso(r.published_at),
     createdAt: iso(r.created_at)!,
+  };
+}
+
+function toMediaJob(r: Row): MediaJob {
+  return {
+    id: r.id,
+    kind: r.kind,
+    provider: r.provider,
+    model: r.model,
+    prompt: r.prompt,
+    sourceImageUri: opt(r.source_image_uri),
+    providerJobId: opt(r.provider_job_id),
+    status: r.status,
+    estimatedCostUsd: Number(r.estimated_cost_usd),
+    actualCostUsd: r.actual_cost_usd === null || r.actual_cost_usd === undefined ? undefined : Number(r.actual_cost_usd),
+    assetId: opt(r.asset_id),
+    error: opt(r.error),
+    createdAt: iso(r.created_at)!,
+    finishedAt: iso(r.finished_at),
   };
 }
 
@@ -179,5 +200,41 @@ export class PostgresStore implements Store {
       [id, from, to],
     );
     return rows[0] ? toVariant(rows[0]) : undefined;
+  }
+
+  async putMediaJob(j: MediaJob) {
+    await this.sql.query(
+      `insert into social_media_jobs (id, kind, provider, model, prompt, source_image_uri, provider_job_id, status,
+         estimated_cost_usd, actual_cost_usd, asset_id, error, created_at, finished_at)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+       on conflict (id) do update set provider_job_id = excluded.provider_job_id, status = excluded.status,
+         estimated_cost_usd = excluded.estimated_cost_usd, actual_cost_usd = excluded.actual_cost_usd,
+         asset_id = excluded.asset_id, error = excluded.error, finished_at = excluded.finished_at`,
+      [
+        j.id, j.kind, j.provider, j.model, j.prompt, j.sourceImageUri ?? null, j.providerJobId ?? null, j.status,
+        j.estimatedCostUsd, j.actualCostUsd ?? null, j.assetId ?? null, j.error ?? null, j.createdAt, j.finishedAt ?? null,
+      ],
+    );
+  }
+
+  async getMediaJob(id: string) {
+    const rows = await this.sql.query<Row>(`select * from social_media_jobs where id = $1`, [id]);
+    return rows[0] ? toMediaJob(rows[0]) : undefined;
+  }
+
+  async listMediaJobs(filter?: { statuses?: MediaJobStatus[] }) {
+    const rows = await this.sql.query<Row>(
+      `select * from social_media_jobs where ($1::text[] is null or status = any($1::text[])) order by created_at`,
+      [filter?.statuses ?? null],
+    );
+    return rows.map(toMediaJob);
+  }
+
+  async mediaSpendUsd(sinceIso: string) {
+    const rows = await this.sql.query<{ total: string }>(
+      `select coalesce(sum(coalesce(actual_cost_usd, estimated_cost_usd)), 0) as total from social_media_jobs where created_at >= $1`,
+      [sinceIso],
+    );
+    return Number(rows[0]!.total);
   }
 }

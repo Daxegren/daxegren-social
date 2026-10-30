@@ -85,6 +85,13 @@ describe("review queue access (RLS)", () => {
     expect(res.rows).toHaveLength(0);
   });
 
+  it("media jobs are readable by admins only, and read-only", async () => {
+    await db.exec(`insert into social_media_jobs (kind, provider, model, prompt, estimated_cost_usd) values ('video', 'p', 'm', 'x', 0.1)`);
+    expect((await as(ADMIN, () => db.query(`select id from social_media_jobs`))).rows).toHaveLength(1);
+    expect((await as(STRANGER, () => db.query(`select id from social_media_jobs`))).rows).toHaveLength(0);
+    await expect(as(ADMIN, () => db.query(`update social_media_jobs set status = 'completed'`))).rejects.toThrow(/permission denied/);
+  });
+
   it("nobody authenticated can insert or delete", async () => {
     await expect(as(ADMIN, () => db.query(`delete from social_variants where id = $1`, [draftId]))).rejects.toThrow(/permission denied/);
     await expect(

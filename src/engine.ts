@@ -1,8 +1,20 @@
 import { analyzeChannel, suggestTime, type ChannelInsights } from "./analyze.js";
 import { validateVariant } from "./channels.js";
-import type { Asset, AssetKind, Channel, ContentBrief, PostVariant, PublishedPost } from "./domain.js";
-import { NotSupportedError, type ChannelAdapter, type RemotePost } from "./adapters/types.js";
-import type { ContentGenerator, MediaGenerator, MediaRequest } from "./generate.js";
+import type { Asset, AssetKind, Channel, ContentBrief, MediaJob, PostVariant, PublishedPost } from "./domain.js";
+import { NotSupportedError, type ChannelAdapter, type FetchLike, type RemotePost } from "./adapters/types.js";
+import type { ContentGenerator } from "./generate.js";
+import {
+  buildVideoPrompt,
+  checkMonthlyCap,
+  DEFAULT_MONTHLY_CAP_USD,
+  DEFAULT_VIDEO_MODEL,
+  findVideoModel,
+  MediaCapReachedError,
+  monthStartIso,
+  VIDEO_MODELS,
+  type MediaStorage,
+  type VideoGenerator,
+} from "./media.js";
 import { runDue, type SchedulerOptions, type TickResult } from "./scheduler.js";
 import type { Store } from "./store.js";
 
@@ -10,7 +22,12 @@ export interface EngineConfig {
   store: Store;
   adapters: Partial<Record<Channel, ChannelAdapter>>;
   generator: ContentGenerator;
-  mediaGenerator?: MediaGenerator;
+  /** Paid video generation. Needs `mediaStorage` as well, so results outlive the provider's links. */
+  videoGenerator?: VideoGenerator;
+  mediaStorage?: MediaStorage;
+  /** Monthly spend limit for media generation, in USD. Default 50. */
+  mediaMonthlyCapUsd?: number;
+  fetch?: FetchLike;
   /**
    * Channels whose generated variants skip the review queue and are scheduled
    * right away. Default: none — every variant waits for human approval.
@@ -38,17 +55,150 @@ export class ContentEngine {
     return this.saveAsset(kind, "captured", uri, meta);
   }
 
-  /** Generate an image/video and store it as a `generated` asset. */
-  async generateAsset(req: MediaRequest): Promise<Asset> {
-    if (!this.cfg.mediaGenerator) throw new Error("no media generator configured");
-    const out = await this.cfg.mediaGenerator.generate(req);
-    return this.saveAsset(req.kind, "generated", out.uri, { ...out.meta, prompt: req.prompt });
-  }
-
   private async saveAsset(kind: AssetKind, origin: Asset["origin"], uri: string, meta?: Record<string, unknown>) {
     const asset: Asset = { id: crypto.randomUUID(), kind, origin, uri, createdAt: this.now().toISOString(), meta };
     await this.store.putAsset(asset);
     return asset;
+  }
+
+  // ── Media generation (paid, asynchronous) ─────────────────────────────
+
+  /**
+   * Starts a video generation. Refuses when the monthly cap would be exceeded. The job is saved before the
+   * provider is called and its provider id right after, so a paid result can always be collected later.
+   */
+  async startVideo(input: { prompt: string; sourceImageUri?: string; model?: string }): Promise<MediaJob> {
+    const generator = this.cfg.videoGenerator;
+    if (!generator) throw new Error("no video generator configured (set HIGGSFIELD_API_KEY)");
+    if (!this.cfg.mediaStorage) throw new Error("no media storage configured (set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY)");
+
+    const model = findVideoModel(input.model ?? DEFAULT_VIDEO_MODEL);
+    if (!model) throw new Error(`unknown video model "${input.model}". Known: ${VIDEO_MODELS.map((m) => m.id).join(", ")}`);
+    if (model.mode === "image-to-video" && !input.sourceImageUri) {
+      throw new Error(`${model.id} turns an image into a video: pass a source image (https URL)`);
+    }
+    if (input.sourceImageUri && !input.sourceImageUri.startsWith("https://")) throw new Error("the source image must be an https URL");
+
+    const request = { model: model.id, prompt: buildVideoPrompt(input.prompt), sourceImageUri: input.sourceImageUri };
+    const estimate = await generator.estimate(request);
+
+    const now = this.now();
+    const guard = checkMonthlyCap({
+      spentUsd: await this.store.mediaSpendUsd(monthStartIso(now)),
+      capUsd: this.cfg.mediaMonthlyCapUsd ?? DEFAULT_MONTHLY_CAP_USD,
+      estimateUsd: estimate.usd,
+    });
+    if (!guard.allowed) throw new MediaCapReachedError(guard.message!);
+
+    const job: MediaJob = {
+      id: crypto.randomUUID(),
+      kind: "video",
+      provider: generator.provider,
+      model: model.id,
+      prompt: request.prompt,
+      sourceImageUri: input.sourceImageUri,
+      status: "queued",
+      estimatedCostUsd: estimate.usd,
+      createdAt: now.toISOString(),
+    };
+    await this.store.putMediaJob(job);
+
+    try {
+      const { providerJobId } = await generator.submit(request);
+      job.providerJobId = providerJobId;
+      job.status = "in_progress";
+    } catch (err) {
+      job.status = "failed";
+      job.error = (err as Error).message;
+      job.actualCostUsd = 0;
+      job.finishedAt = this.now().toISOString();
+      await this.store.putMediaJob(job);
+      throw err;
+    }
+    await this.store.putMediaJob(job);
+    return job;
+  }
+
+  /** Polls one job; when the provider is done, stores the file durably and registers it as a generated Asset. */
+  async advanceJob(jobId: string): Promise<MediaJob> {
+    const job = await this.store.getMediaJob(jobId);
+    if (!job) throw new Error(`unknown media job ${jobId}`);
+    if (job.status === "completed" || job.status === "failed") return job;
+
+    const generator = this.cfg.videoGenerator;
+    const storage = this.cfg.mediaStorage;
+    if (!generator || !storage) throw new Error("video generation is not configured");
+
+    const age = this.now().getTime() - new Date(job.createdAt).getTime();
+    const finish = async (patch: Partial<MediaJob>) => {
+      const done = { ...job, ...patch, finishedAt: this.now().toISOString() };
+      await this.store.putMediaJob(done);
+      return done;
+    };
+
+    if (!job.providerJobId) {
+      // Saved but never submitted: nothing was charged. Give an in-flight start a few minutes before giving up.
+      return age > 10 * 60_000 ? finish({ status: "failed", error: "never submitted to the provider", actualCostUsd: 0 }) : job;
+    }
+
+    const state = await generator.status(job.providerJobId);
+    if (state.status === "failed") return finish({ status: "failed", error: state.error ?? "failed", actualCostUsd: 0 });
+    if (state.status !== "completed") {
+      if (age > 60 * 60_000) {
+        // Cost is unknown, so the estimate keeps counting against the cap.
+        return finish({ status: "failed", error: "timed out waiting for the provider" });
+      }
+      if (state.status !== job.status) {
+        const updated = { ...job, status: state.status };
+        await this.store.putMediaJob(updated);
+        return updated;
+      }
+      return job;
+    }
+    if (!state.videoUrl?.startsWith("https://")) return finish({ status: "failed", error: "provider returned no video" });
+
+    const res = await (this.cfg.fetch ?? fetch)(state.videoUrl);
+    if (!res.ok) throw new Error(`could not download the generated video (HTTP ${res.status}); will retry`);
+    const uri = await storage.put(`generated/${job.id}.mp4`, new Uint8Array(await res.arrayBuffer()), "video/mp4");
+
+    // The asset reuses the job's id, so finishing the same job twice (after a crash) cannot create duplicates.
+    await this.store.putAsset({
+      id: job.id,
+      kind: "video",
+      origin: "generated",
+      uri,
+      createdAt: this.now().toISOString(),
+      meta: { provider: job.provider, model: job.model, prompt: job.prompt, jobId: job.id, costUsd: state.actualCostUsd ?? job.estimatedCostUsd },
+    });
+    return finish({ status: "completed", assetId: job.id, actualCostUsd: state.actualCostUsd });
+  }
+
+  /** Advances every unfinished job. One failing job (e.g. a network blip) does not stop the others. */
+  async advanceMedia(): Promise<{ completed: string[]; failed: string[]; pending: number; errors: string[] }> {
+    const result = { completed: [] as string[], failed: [] as string[], pending: 0, errors: [] as string[] };
+    for (const job of await this.store.listMediaJobs({ statuses: ["queued", "in_progress"] })) {
+      try {
+        const next = await this.advanceJob(job.id);
+        if (next.status === "completed") result.completed.push(next.id);
+        else if (next.status === "failed") result.failed.push(next.id);
+        else result.pending++;
+      } catch (err) {
+        result.pending++;
+        result.errors.push(`${job.id}: ${(err as Error).message}`);
+      }
+    }
+    return result;
+  }
+
+  /** Polls until the job finishes or `timeoutMs` passes (the job keeps going; `tick` will collect it). */
+  async waitForJob(jobId: string, opts: { timeoutMs?: number; pollMs?: number; sleep?: (ms: number) => Promise<void> } = {}): Promise<MediaJob> {
+    const sleep = opts.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
+    const deadline = Date.now() + (opts.timeoutMs ?? 8 * 60_000);
+    for (;;) {
+      const job = await this.advanceJob(jobId);
+      if (job.status === "completed" || job.status === "failed" || Date.now() >= deadline) return job;
+      await sleep(opts.pollMs ?? 5_000);
+    }
   }
 
   // ── 1. Ingest ─────────────────────────────────────────────────────────
@@ -198,9 +348,11 @@ export class ContentEngine {
 
   // ── 5. Publish ────────────────────────────────────────────────────────
 
-  /** Call on an interval (cron, Supabase scheduled function, …). */
-  tick(): Promise<TickResult> {
-    return runDue(this.store, this.adapters, this.now(), this.cfg.scheduler);
+  /** Call on an interval: publishes what is due and collects finished media. */
+  async tick(): Promise<TickResult & { media?: Awaited<ReturnType<ContentEngine["advanceMedia"]>> }> {
+    const published = await runDue(this.store, this.adapters, this.now(), this.cfg.scheduler);
+    const media = this.cfg.videoGenerator && this.cfg.mediaStorage ? await this.advanceMedia() : undefined;
+    return media ? { ...published, media } : published;
   }
 
   // ── helpers ───────────────────────────────────────────────────────────

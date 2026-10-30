@@ -24,11 +24,12 @@ export async function freshDb() {
     await db.exec(SUPABASE_STUB);
     await db.exec(migration("0001_init.sql"));
     await db.exec(migration("0002_review_access.sql"));
+    await db.exec(migration("0003_media_jobs.sql"));
     return db;
   })();
   const db = await shared;
   await db.exec(
-    `reset role; truncate social_admins, social_posts, social_variants, social_briefs, social_assets, auth.users cascade;`,
+    `reset role; truncate social_media_jobs, social_admins, social_posts, social_variants, social_briefs, social_assets, auth.users cascade;`,
   );
   const sql: SqlClient = { query: async (text, params) => (await db.query(text, params)).rows as never };
   return { db, sql };

@@ -1,6 +1,6 @@
 import type { ChannelInsights } from "./analyze.js";
 import { CHANNEL_SPECS } from "./channels.js";
-import type { Asset, AssetKind, Channel, ContentBrief, PublishedPost } from "./domain.js";
+import type { Asset, Channel, ContentBrief, PublishedPost } from "./domain.js";
 import type { FetchLike } from "./adapters/types.js";
 
 export interface GenerationInput {
@@ -23,20 +23,6 @@ export interface GeneratedVariant {
 /** Text generation. Swap implementations without touching the engine. */
 export interface ContentGenerator {
   generate(input: GenerationInput): Promise<GeneratedVariant[]>;
-}
-
-export interface MediaRequest {
-  kind: AssetKind;
-  prompt: string;
-  channel?: Channel;
-}
-
-/**
- * Image/video generation. The engine stores the result as an Asset with
- * origin `generated`. Plug in whichever provider you use.
- */
-export interface MediaGenerator {
-  generate(req: MediaRequest): Promise<{ uri: string; meta?: Record<string, unknown> }>;
 }
 
 export interface ClaudeGeneratorConfig {

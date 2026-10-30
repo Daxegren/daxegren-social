@@ -2,6 +2,8 @@ import type {
   Asset,
   Channel,
   ContentBrief,
+  MediaJob,
+  MediaJobStatus,
   PostVariant,
   PublishedPost,
   VariantStatus,
@@ -27,6 +29,12 @@ export interface Store {
   getVariant(id: string): Promise<PostVariant | undefined>;
   listVariants(filter?: { status?: VariantStatus; briefId?: string }): Promise<PostVariant[]>;
 
+  putMediaJob(job: MediaJob): Promise<void>;
+  getMediaJob(id: string): Promise<MediaJob | undefined>;
+  listMediaJobs(filter?: { statuses?: MediaJobStatus[] }): Promise<MediaJob[]>;
+  /** Money committed to media generation since `sinceIso`: actual cost where known, otherwise the estimate. */
+  mediaSpendUsd(sinceIso: string): Promise<number>;
+
   /**
    * Atomically move a variant from `from` to `to`. Returns the updated variant,
    * or undefined if it was not in `from` (someone else claimed it).
@@ -39,6 +47,7 @@ export class MemoryStore implements Store {
   private posts = new Map<string, PublishedPost>();
   private briefs = new Map<string, ContentBrief>();
   private variants = new Map<string, PostVariant>();
+  private mediaJobs = new Map<string, MediaJob>();
 
   async putAsset(asset: Asset) {
     this.assets.set(asset.id, structuredClone(asset));
@@ -100,6 +109,28 @@ export class MemoryStore implements Store {
       .filter((v) => !filter?.status || v.status === filter.status)
       .filter((v) => !filter?.briefId || v.briefId === filter.briefId)
       .map((v) => structuredClone(v));
+  }
+
+  async putMediaJob(job: MediaJob) {
+    this.mediaJobs.set(job.id, structuredClone(job));
+  }
+
+  async getMediaJob(id: string) {
+    const j = this.mediaJobs.get(id);
+    return j ? structuredClone(j) : undefined;
+  }
+
+  async listMediaJobs(filter?: { statuses?: MediaJobStatus[] }) {
+    return [...this.mediaJobs.values()]
+      .filter((j) => !filter?.statuses || filter.statuses.includes(j.status))
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+      .map((j) => structuredClone(j));
+  }
+
+  async mediaSpendUsd(sinceIso: string) {
+    return [...this.mediaJobs.values()]
+      .filter((j) => j.createdAt >= sinceIso)
+      .reduce((sum, j) => sum + (j.actualCostUsd ?? j.estimatedCostUsd), 0);
   }
 
   async transitionVariant(id: string, from: VariantStatus, to: VariantStatus) {

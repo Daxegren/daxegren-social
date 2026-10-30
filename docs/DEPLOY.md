@@ -8,7 +8,9 @@ pricing and limits on each provider's site before relying on this**; they change
 | Database + login | Supabase | `social_*` tables, sign-in for the review queue | Free tier; projects on it pause when inactive (the 15-minute tick keeps it awake) |
 | Review queue | Cloudflare Pages (or Netlify, Vercel, GitHub Pages) | Static site from `web/` | Static hosting |
 | Worker | GitHub Actions | `tick` every 15 min, daily learn, manual "Generate drafts" | Free for public repos. Private repos have a monthly minute quota; 15-minute ticks would exceed the free quota, so use ~30–60 min or keep the repo public |
-| Content generation | Anthropic API | Drafts | Per token — the real running cost |
+| Content generation | Anthropic API | Drafts | Per token |
+| Video generation | Higgsfield | Clips from a product image or a text prompt | Per clip — roughly 0.07–0.30 USD each according to the notes in Ecomduct CoPilot; capped per month (below) |
+| Generated files | Supabase Storage | Durable public URLs the platforms fetch media from | Storage quota |
 
 Costs that scale with what you publish rather than with hosting: the Anthropic API, X's paid API, and any
 image/video generation you connect later.
@@ -31,6 +33,9 @@ image/video generation you connect later.
    insert into social_admins (user_id) values ('<your id from auth.users>');
    ```
 
+Also create the storage bucket once: Supabase → Storage → New bucket → name `social-media`, **public**.
+Files get unguessable uuid paths, and the platforms need a public URL to fetch media from anyway.
+
 ### 2. Review queue (Cloudflare Pages)
 
 Connect the repo. Build command `npm ci && npm run build:web`, output directory `web/dist`, environment variables
@@ -46,12 +51,23 @@ Repository → Settings → Secrets and variables → Actions:
 | `ANTHROPIC_API_KEY` | generating drafts |
 | `LINKEDIN_AUTHOR_URN`, `LINKEDIN_ACCESS_TOKEN` | publishing to LinkedIn |
 | `INSTAGRAM_USER_ID`, `INSTAGRAM_ACCESS_TOKEN` | publishing to / learning from Instagram |
+| `HIGGSFIELD_API_KEY` (`KEY_ID:KEY_SECRET`) | generating video |
+| `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | storing generated video. **Service-role key: Actions secret only, never in the browser** |
+
+Optional variable `MEDIA_MONTHLY_CAP_USD` (default 50) is the hard monthly limit on video spend.
 
 Then add the **variable** `SOCIAL_ENABLED` = `true`. Until it is set, none of the worker workflows do anything.
 A channel is enabled when its secrets are present. Optional secret `AUTO_APPROVE_CHANNELS` (e.g. `linkedin`)
 skips review for those channels — leave it unset until you trust the output.
 
-Day to day: Actions → **Generate drafts** → fill in the idea and channels → review in the queue → approved
+Day to day:
+
+- **Your own photo or video:** upload it somewhere public over https (e.g. the same Storage bucket), then run
+  `npm run social -- add-asset image <url>` locally, or ask me to add a workflow for it. It prints an asset id.
+- **Generated video:** Actions → **Generate video** → prompt, source image URL, model. It waits for the clip, stores it,
+  and prints `asset <id>`. Costs money; refuses to start past the monthly cap. A clip that is still rendering when the
+  job times out is collected by the next `tick`.
+- **Drafts:** Actions → **Generate drafts** → fill in the idea and channels (paste asset ids to attach media) → review in the queue → approved
 posts are published by the next tick.
 
 ## Things to know
@@ -62,6 +78,9 @@ posts are published by the next tick.
   repository activity. Re-enable them in the Actions tab if that happens.
 - **Timing.** GitHub's cron is best effort and often a few minutes late; a post goes out at the first tick after
   its scheduled time.
+- **Video spend is bounded, not exact.** The cap counts started jobs at their estimate until the provider reports
+  the real cost. Two jobs started at the same moment can together pass the cap slightly. Higgsfield does not
+  always report actual cost, so figures are estimates.
 - **A cancelled run can strand a post.** If a run is killed mid-publish the variant stays `publishing`
   (retrying automatically could post twice). Check the platform, then fix the row by hand.
 - **Public repo.** Code and docs are public. Secrets live only in Actions secrets and are not exposed to

@@ -1,31 +1,45 @@
 # daxegren-social
 
 Content engine for my own channels. It reads what I have already published, learns what works, generates new
-content from a brief (using my own photos and videos, generated media, or both), and schedules and publishes it.
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+content from a brief (using my own photos and videos, generated media, or both), and schedules and publishes it
+— with a review queue in between.
 
-```ts
-import { ContentEngine, MemoryStore, InstagramAdapter, LinkedInAdapter, ClaudeContentGenerator } from "@daxegren/social-engine";
+- Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+- Deploy, setup and running costs: [docs/DEPLOY.md](docs/DEPLOY.md)
 
-const engine = new ContentEngine({
-  store: new MemoryStore(), // swap for a Postgres/Supabase Store
-  adapters: {
-    instagram: new InstagramAdapter({ igUserId, accessToken }),
-    linkedin: new LinkedInAdapter({ authorUrn, accessToken }),
-  },
-  generator: new ClaudeContentGenerator({ apiKey }),
-});
-
-await engine.ingest("instagram");                         // learn from what exists
-const photo = await engine.addCapturedAsset("image", "https://cdn.example.com/me.jpg");
-const brief = await engine.createBrief({ idea: "...", assetIds: [photo.id] });
-const drafts = await engine.proposeVariants(brief.id, ["instagram", "linkedin"]);
-await engine.approve(drafts[0].id, { scheduledAt: new Date("2026-11-03T08:00:00Z") });
-await engine.tick();                                      // run on an interval
 ```
+Generate drafts (GitHub Actions form) → review queue (web/) → tick publishes → learn → better drafts
+```
+
+## Develop
 
 ```bash
 npm install
-npm test
+npm test            # engine, Postgres store + RLS (real Postgres via PGlite), worker, review queue
+npm run typecheck
+npm run dev:web     # review queue; needs web/.env (see web/.env.example)
+npm run build:web
+```
+
+## Worker commands
+
+```bash
 npm run build
+export DATABASE_URL=...            # plus channel / ANTHROPIC_API_KEY variables, see docs/DEPLOY.md
+npm run social -- migrate
+npm run social -- generate "Why I build in public" --channels linkedin,instagram
+npm run social -- tick
+npm run social -- ingest instagram
+```
+
+## Use as a library
+
+```ts
+import { ContentEngine, PostgresStore, LinkedInAdapter, ClaudeContentGenerator } from "@daxegren/social-engine";
+
+const engine = new ContentEngine({
+  store: new PostgresStore(sql),
+  adapters: { linkedin: new LinkedInAdapter({ authorUrn, accessToken }) },
+  generator: new ClaudeContentGenerator({ apiKey }),
+});
 ```

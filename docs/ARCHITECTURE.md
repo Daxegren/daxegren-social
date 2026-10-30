@@ -14,11 +14,15 @@ measurements feed the next round of analysis.
 
 ## Where it lives
 
-- **Base:** this repository, `@daxegren/social-engine`. A framework-free TypeScript library with no runtime
-  dependencies (it uses the global `fetch` and `crypto`).
-- **David OS module:** David OS (Lovable, TypeScript + Supabase) imports the package and supplies a
-  Postgres-backed `Store` (schema in `db/migrations/`). The review queue is a UI over `PostVariant`
-  rows with status `draft`; `engine.tick()` runs from a Supabase scheduled function.
+One repository, `@daxegren/social-engine`, standalone:
+
+- `src/` — the engine: a framework-free TypeScript library (global `fetch` and `crypto`, no runtime
+  dependencies; `pg` is only used by the worker).
+- `src/worker/` — the command line the automation runs: `migrate`, `tick`, `ingest`, `refresh-metrics`, `generate`.
+- `web/` — the review queue: a static React app that talks to Supabase directly and imports the channel
+  rules from `src/`, so it validates with exactly the rules the scheduler enforces.
+- `db/migrations/` — the Postgres schema and the row-level-security rules the browser relies on.
+- `.github/workflows/` — CI, and the worker running on a schedule. See [DEPLOY.md](DEPLOY.md).
 
 ## Pieces
 
@@ -26,12 +30,14 @@ measurements feed the next round of analysis.
 |---|---|---|
 | Domain | `src/domain.ts` | Channels, assets (captured vs generated), posts, briefs, variants |
 | Channel rules | `src/channels.ts` | Per-channel limits and `validateVariant` |
-| Store | `src/store.ts` | Persistence interface + in-memory implementation |
+| Store | `src/store.ts`, `src/postgres-store.ts` | Persistence interface; in-memory and Postgres implementations (same contract tests) |
 | Adapters | `src/adapters/*` | One per channel: publish, ingest, metrics. Only place with platform specifics |
 | Analysis | `src/analyze.ts` | Engagement rate, best hours, length/media performance, time suggestion |
 | Generation | `src/generate.ts` | `ContentGenerator` (Claude implementation) and `MediaGenerator` interface |
 | Scheduler | `src/scheduler.ts` | Claims due variants atomically, validates, publishes, retries with backoff |
 | Engine | `src/engine.ts` | Orchestrates everything above |
+| Worker | `src/worker/*` | Wires the engine from environment variables; CLI and migrations |
+| Review queue | `web/` | Edit, schedule, approve or reject drafts; read-only views of the rest |
 
 ## Decisions
 
@@ -54,6 +60,7 @@ measurements feed the next round of analysis.
 | LinkedIn | text, one image | via `importPosts` | no |
 | Facebook, TikTok, Pinterest, YouTube, X, Snapchat | not yet — implement `ChannelAdapter` | | |
 
-Not built yet: Supabase `Store`, a `MediaGenerator` implementation, Instagram carousels and richer insights
-(reach/saves), video upload flows for the other channels. Platform limits in `channels.ts` and API
-versions in the adapters should be checked against current platform documentation before production use.
+Not built yet: a `MediaGenerator` implementation, Instagram carousels and richer insights (reach/saves), video
+upload flows for the other channels, recovery of variants stranded in `publishing`. Platform limits in
+`channels.ts` and API versions in the adapters should be checked against current platform documentation before
+production use.

@@ -10,6 +10,7 @@ pricing and limits on each provider's site before relying on this**; they change
 | Worker | GitHub Actions | `tick` every 15 min, daily learn, manual "Generate drafts" | Free for public repos. Private repos have a monthly minute quota; 15-minute ticks would exceed the free quota, so use ~30–60 min or keep the repo public |
 | Content generation | Anthropic API | Drafts | Per token |
 | Video generation | Higgsfield | Clips from a product image or a text prompt | Per clip — roughly 0.07–0.30 USD each according to the notes in Ecomduct CoPilot; capped per month (below) |
+| Image generation | Google Gemini API | Images from a prompt, optionally based on a reference photo | Per image (estimate 0.04 USD, configurable); shares the monthly cap with video |
 | Generated files | Supabase Storage | Durable public URLs the platforms fetch media from | Storage quota |
 
 Costs that scale with what you publish rather than with hosting: the Anthropic API, X's paid API, and any
@@ -52,9 +53,10 @@ Repository → Settings → Secrets and variables → Actions:
 | `LINKEDIN_AUTHOR_URN`, `LINKEDIN_ACCESS_TOKEN` | publishing to LinkedIn |
 | `INSTAGRAM_USER_ID`, `INSTAGRAM_ACCESS_TOKEN` | publishing to / learning from Instagram |
 | `HIGGSFIELD_API_KEY` (`KEY_ID:KEY_SECRET`) | generating video |
+| `GEMINI_API_KEY` | generating images. A key from **Google AI Studio**, with its own billing — a consumer Gemini subscription is not an API key |
 | `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | storing generated video. **Service-role key: Actions secret only, never in the browser** |
 
-Optional variable `MEDIA_MONTHLY_CAP_USD` (default 50) is the hard monthly limit on video spend.
+Optional variables `GEMINI_IMAGE_MODEL` (default `gemini-2.5-flash-image`) and `GEMINI_IMAGE_COST_USD` (default 0.04) — check Google's current model list and prices. Optional variable `MEDIA_MONTHLY_CAP_USD` (default 50) is the hard monthly limit on video spend.
 
 Then add the **variable** `SOCIAL_ENABLED` = `true`. Until it is set, none of the worker workflows do anything.
 A channel is enabled when its secrets are present. Optional secret `AUTO_APPROVE_CHANNELS` (e.g. `linkedin`)
@@ -64,6 +66,7 @@ Day to day:
 
 - **Your own photo or video:** upload it somewhere public over https (e.g. the same Storage bucket), then run
   `npm run social -- add-asset image <url>` locally, or ask me to add a workflow for it. It prints an asset id.
+- **Generated image:** Actions → **Generate image** (optionally with a reference photo URL). **Run it once first and read the log:** the Gemini adapter was written from memory of the API and has not been confirmed against a live key.
 - **Generated video:** Actions → **Generate video** → prompt, source image URL, model. It waits for the clip, stores it,
   and prints `asset <id>`. Costs money; refuses to start past the monthly cap. A clip that is still rendering when the
   job times out is collected by the next `tick`.

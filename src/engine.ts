@@ -4,6 +4,7 @@ import type { Asset, AssetKind, Channel, ContentBrief, MediaJob, PostVariant, Pu
 import { NotSupportedError, type ChannelAdapter, type FetchLike, type RemotePost } from "./adapters/types.js";
 import type { ContentGenerator } from "./generate.js";
 import {
+  buildImagePrompt,
   buildVideoPrompt,
   checkMonthlyCap,
   DEFAULT_MONTHLY_CAP_USD,
@@ -12,6 +13,8 @@ import {
   MediaCapReachedError,
   monthStartIso,
   VIDEO_MODELS,
+  type ImageAspect,
+  type ImageGenerator,
   type MediaStorage,
   type VideoGenerator,
 } from "./media.js";
@@ -25,6 +28,8 @@ export interface EngineConfig {
   /** Paid video generation. Needs `mediaStorage` as well, so results outlive the provider's links. */
   videoGenerator?: VideoGenerator;
   mediaStorage?: MediaStorage;
+  /** Paid image generation (synchronous). Also needs `mediaStorage`. */
+  imageGenerator?: ImageGenerator;
   /** Monthly spend limit for media generation, in USD. Default 50. */
   mediaMonthlyCapUsd?: number;
   fetch?: FetchLike;
@@ -63,6 +68,70 @@ export class ContentEngine {
 
   // ── Media generation (paid, asynchronous) ─────────────────────────────
 
+  private async guardCap(estimateUsd: number) {
+    const guard = checkMonthlyCap({
+      spentUsd: await this.store.mediaSpendUsd(monthStartIso(this.now())),
+      capUsd: this.cfg.mediaMonthlyCapUsd ?? DEFAULT_MONTHLY_CAP_USD,
+      estimateUsd,
+    });
+    if (!guard.allowed) throw new MediaCapReachedError(guard.message!);
+  }
+
+  /**
+   * Generates an image (optionally based on a reference image), stores it durably and registers it as a generated
+   * Asset. Counts against the same monthly cap as video; the job row is written before the provider is called.
+   */
+  async generateImage(input: { prompt: string; aspect?: ImageAspect; referenceImageUri?: string }): Promise<Asset> {
+    const generator = this.cfg.imageGenerator;
+    const storage = this.cfg.mediaStorage;
+    if (!generator) throw new Error("no image generator configured (set GEMINI_API_KEY)");
+    if (!storage) throw new Error("no media storage configured (set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY)");
+    if (input.referenceImageUri && !input.referenceImageUri.startsWith("https://")) throw new Error("the reference image must be an https URL");
+
+    const aspect = input.aspect ?? "4:5";
+    const estimate = await generator.estimate({ aspect });
+    await this.guardCap(estimate.usd);
+
+    const job: MediaJob = {
+      id: crypto.randomUUID(),
+      kind: "image",
+      provider: generator.provider,
+      model: generator.model,
+      prompt: buildImagePrompt(input.prompt, aspect, Boolean(input.referenceImageUri)),
+      sourceImageUri: input.referenceImageUri,
+      status: "in_progress",
+      estimatedCostUsd: estimate.usd,
+      createdAt: this.now().toISOString(),
+    };
+    await this.store.putMediaJob(job);
+
+    try {
+      let reference: { bytes: Uint8Array; mimeType: string } | undefined;
+      if (input.referenceImageUri) {
+        const res = await (this.cfg.fetch ?? fetch)(input.referenceImageUri);
+        if (!res.ok) throw new Error(`could not download the reference image (HTTP ${res.status})`);
+        reference = { bytes: new Uint8Array(await res.arrayBuffer()), mimeType: res.headers.get("content-type")?.split(";")[0] ?? "image/jpeg" };
+      }
+      const image = await generator.generate({ prompt: job.prompt, aspect, reference });
+      const ext = image.mimeType.includes("jpeg") ? "jpg" : image.mimeType.includes("webp") ? "webp" : "png";
+      const uri = await storage.put(`generated/${job.id}.${ext}`, image.bytes, image.mimeType);
+      const asset: Asset = {
+        id: job.id,
+        kind: "image",
+        origin: "generated",
+        uri,
+        createdAt: this.now().toISOString(),
+        meta: { provider: job.provider, model: job.model, prompt: job.prompt, jobId: job.id, costUsd: image.actualCostUsd ?? estimate.usd },
+      };
+      await this.store.putAsset(asset);
+      await this.store.putMediaJob({ ...job, status: "completed", assetId: asset.id, actualCostUsd: image.actualCostUsd, finishedAt: this.now().toISOString() });
+      return asset;
+    } catch (err) {
+      await this.store.putMediaJob({ ...job, status: "failed", error: (err as Error).message, actualCostUsd: 0, finishedAt: this.now().toISOString() });
+      throw err;
+    }
+  }
+
   /**
    * Starts a video generation. Refuses when the monthly cap would be exceeded. The job is saved before the
    * provider is called and its provider id right after, so a paid result can always be collected later.
@@ -83,12 +152,7 @@ export class ContentEngine {
     const estimate = await generator.estimate(request);
 
     const now = this.now();
-    const guard = checkMonthlyCap({
-      spentUsd: await this.store.mediaSpendUsd(monthStartIso(now)),
-      capUsd: this.cfg.mediaMonthlyCapUsd ?? DEFAULT_MONTHLY_CAP_USD,
-      estimateUsd: estimate.usd,
-    });
-    if (!guard.allowed) throw new MediaCapReachedError(guard.message!);
+    await this.guardCap(estimate.usd);
 
     const job: MediaJob = {
       id: crypto.randomUUID(),
@@ -125,16 +189,21 @@ export class ContentEngine {
     if (!job) throw new Error(`unknown media job ${jobId}`);
     if (job.status === "completed" || job.status === "failed") return job;
 
-    const generator = this.cfg.videoGenerator;
-    const storage = this.cfg.mediaStorage;
-    if (!generator || !storage) throw new Error("video generation is not configured");
-
     const age = this.now().getTime() - new Date(job.createdAt).getTime();
     const finish = async (patch: Partial<MediaJob>) => {
       const done = { ...job, ...patch, finishedAt: this.now().toISOString() };
       await this.store.putMediaJob(done);
       return done;
     };
+
+    if (job.kind === "image") {
+      // Images finish inside generateImage. A row still open after a few minutes means the process died: nothing is stored.
+      return age > 10 * 60_000 ? finish({ status: "failed", error: "interrupted before the image was stored", actualCostUsd: 0 }) : job;
+    }
+
+    const generator = this.cfg.videoGenerator;
+    const storage = this.cfg.mediaStorage;
+    if (!generator || !storage) throw new Error("video generation is not configured");
 
     if (!job.providerJobId) {
       // Saved but never submitted: nothing was charged. Give an in-flight start a few minutes before giving up.
@@ -351,7 +420,7 @@ export class ContentEngine {
   /** Call on an interval: publishes what is due and collects finished media. */
   async tick(): Promise<TickResult & { media?: Awaited<ReturnType<ContentEngine["advanceMedia"]>> }> {
     const published = await runDue(this.store, this.adapters, this.now(), this.cfg.scheduler);
-    const media = this.cfg.videoGenerator && this.cfg.mediaStorage ? await this.advanceMedia() : undefined;
+    const media = (this.cfg.videoGenerator || this.cfg.imageGenerator) && this.cfg.mediaStorage ? await this.advanceMedia() : undefined;
     return media ? { ...published, media } : published;
   }
 

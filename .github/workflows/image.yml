@@ -1,0 +1,40 @@
+name: Generate image
+# Costs money (a few cents). Generates an image with Gemini, stores it in Supabase Storage and prints the asset id.
+# Also the quickest way to confirm that GEMINI_API_KEY and the model work: run it once and read the log.
+on:
+  workflow_dispatch:
+    inputs:
+      prompt: { description: "What should the image show?", required: true, default: "A red ceramic mug on a wooden table, morning light" }
+      source: { description: "Public https URL of a reference image to base it on (optional)", required: false }
+      aspect:
+        description: "Format"
+        required: true
+        type: choice
+        default: "4:5"
+        options: ["4:5", "1:1", "9:16"]
+concurrency:
+  group: social-worker
+  cancel-in-progress: false
+jobs:
+  image:
+    if: ${{ vars.SOCIAL_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npm run build
+      - run: node dist/worker/main.js media image "$PROMPT" --aspect "$ASPECT" ${SOURCE:+--source "$SOURCE"}
+        env:
+          PROMPT: ${{ inputs.prompt }}
+          SOURCE: ${{ inputs.source }}
+          ASPECT: ${{ inputs.aspect }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_IMAGE_MODEL: ${{ vars.GEMINI_IMAGE_MODEL }}
+          GEMINI_IMAGE_COST_USD: ${{ vars.GEMINI_IMAGE_COST_USD }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          MEDIA_MONTHLY_CAP_USD: ${{ vars.MEDIA_MONTHLY_CAP_USD }}

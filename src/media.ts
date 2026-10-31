@@ -36,6 +36,31 @@ export interface MediaStorage {
   put(path: string, bytes: Uint8Array, mimeType: string): Promise<string>;
 }
 
+export type ImageAspect = "1:1" | "4:5" | "9:16";
+export const IMAGE_ASPECTS: readonly ImageAspect[] = ["1:1", "4:5", "9:16"];
+
+export interface ImageRequest {
+  prompt: string;
+  aspect: ImageAspect;
+  /** Reference image the result should be based on (e.g. a product photo): public https URL, bytes already fetched. */
+  reference?: { bytes: Uint8Array; mimeType: string };
+}
+
+export interface GeneratedImage {
+  bytes: Uint8Array;
+  mimeType: string;
+  /** Provider-reported cost when available; otherwise the caller uses the estimate. */
+  actualCostUsd?: number;
+}
+
+/** Synchronous image provider. */
+export interface ImageGenerator {
+  readonly provider: string;
+  readonly model: string;
+  estimate(req: Pick<ImageRequest, "aspect">): Promise<MediaCost>;
+  generate(req: ImageRequest): Promise<GeneratedImage>;
+}
+
 export interface VideoModel {
   id: string;
   label: string;
@@ -86,6 +111,19 @@ const VIDEO_PROMPT_SUFFIX =
 
 export function buildVideoPrompt(prompt: string): string {
   return `Short vertical clip. ${prompt.trim()} ${VIDEO_PROMPT_SUFFIX}`;
+}
+
+export function buildImagePrompt(prompt: string, aspect: ImageAspect, hasReference: boolean): string {
+  return [
+    hasReference
+      ? "Photorealistic photograph featuring the product from the reference image."
+      : "Photorealistic photograph.",
+    prompt.trim(),
+    hasReference ? "Keep the product's shape, colours and details exactly as in the reference." : "",
+    `Composition for ${aspect}. Natural light. No text, no logos, no watermarks.`,
+  ]
+    .filter(Boolean)
+    .join(" ");
 }
 
 export class MediaCapReachedError extends Error {

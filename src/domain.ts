@@ -92,10 +92,10 @@ export interface PostVariant {
 
 export type MediaJobStatus = "queued" | "in_progress" | "completed" | "failed";
 
-/** A paid, asynchronous media generation (video). Persisted before spending so a result can never be lost. */
+/** A paid media generation (video: asynchronous; image: synchronous). Persisted before spending so a result can never be lost. */
 export interface MediaJob {
   id: string;
-  kind: "video";
+  kind: "video" | "image";
   provider: string;
   model: string;
   prompt: string;

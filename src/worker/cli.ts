@@ -1,5 +1,6 @@
 import { parseArgs } from "node:util";
 import { CHANNELS, type Channel } from "../domain.js";
+import { IMAGE_ASPECTS, type ImageAspect } from "../media.js";
 import type { FetchLike } from "../adapters/types.js";
 import { PostgresStore, type SqlClient } from "../postgres-store.js";
 import { buildEngine, type Env } from "./env.js";
@@ -14,6 +15,8 @@ export const USAGE = `usage: social <command>
   add-asset <image|video> <https-url>       register a photo or video you made yourself; prints its id
   media video "<prompt>"                    generate a video (costs money; capped per month)
            [--source <https image url>] [--model <id>] [--async]
+  media image "<prompt>"                    generate an image with Gemini (costs money; same cap)
+           [--source <https reference image url>] [--aspect 1:1|4:5|9:16]
   generate "<idea>" --channels a,b          create a brief and draft one variant per channel
            [--angle <text>] [--goal <text>] [--assets id,id]
 `;
@@ -44,6 +47,7 @@ export async function runCli(argv: string[], deps: CliDeps): Promise<string> {
       source: { type: "string" },
       model: { type: "string" },
       async: { type: "boolean" },
+      aspect: { type: "string" },
     },
   });
   const [command, ...rest] = positionals;
@@ -69,7 +73,13 @@ export async function runCli(argv: string[], deps: CliDeps): Promise<string> {
       return (await engine.addCapturedAsset(kind, uri)).id;
     }
     case "media": {
-      if (rest[0] !== "video" || !rest[1]) throw new Error('usage: media video "<prompt>" [--source <https image url>] [--model <id>] [--async]');
+      if (rest[0] === "image" && rest[1]) {
+        const aspect = (values.aspect ?? "4:5") as ImageAspect;
+        if (!IMAGE_ASPECTS.includes(aspect)) throw new Error(`--aspect must be one of ${IMAGE_ASPECTS.join(", ")}`);
+        const asset = await engine.generateImage({ prompt: rest[1], aspect, referenceImageUri: values.source });
+        return `asset ${asset.id}`;
+      }
+      if (rest[0] !== "video" || !rest[1]) throw new Error('usage: media video|image "<prompt>" [--source <https image url>] ...');
       const job = await engine.startVideo({ prompt: rest[1], sourceImageUri: values.source, model: values.model });
       if (values.async) return `job ${job.id} started (estimated ${job.estimatedCostUsd.toFixed(2)} USD); \`tick\` collects it when ready`;
       const done = await engine.waitForJob(job.id, { sleep: deps.sleep });

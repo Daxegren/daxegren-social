@@ -10,5 +10,6 @@ export * from "./engine.js";
 export * from "./adapters/types.js";
 export { InstagramAdapter, type InstagramConfig } from "./adapters/instagram.js";
 export { LinkedInAdapter, type LinkedInConfig } from "./adapters/linkedin.js";
+export { GeminiImageGenerator, type GeminiImageConfig } from "./adapters/gemini-image.js";
 export { HiggsfieldVideoGenerator, type HiggsfieldConfig } from "./adapters/higgsfield.js";
 export { SupabaseStorage, type SupabaseStorageConfig } from "./adapters/supabase-storage.js";

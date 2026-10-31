@@ -243,3 +243,120 @@ describe("SupabaseStorage", () => {
     await expect(new SupabaseStorage({ url: "https://abc.supabase.co", serviceRoleKey: "srv", fetch: fn }).put("x", new Uint8Array(), "video/mp4")).rejects.toThrow(/404/);
   });
 });
+
+import { GeminiImageGenerator } from "../src/adapters/gemini-image.js";
+import { FakeImageGenerator } from "./helpers.js";
+
+describe("engine: image generation", () => {
+  function imageSetup(over: { cap?: number; image?: FakeImageGenerator; fetch?: typeof fetch } = {}) {
+    const store = new MemoryStore();
+    const image = over.image ?? new FakeImageGenerator();
+    const storage = new MemoryStorage();
+    const engine = new ContentEngine({
+      store, adapters: {}, generator: new FakeGenerator(), imageGenerator: image, mediaStorage: storage,
+      mediaMonthlyCapUsd: over.cap, fetch: over.fetch, now: () => T0,
+    });
+    return { store, image, storage, engine };
+  }
+
+  it("generates, stores durably and registers a generated image asset, counted in spend", async () => {
+    const { engine, store, storage, image } = imageSetup();
+    const asset = await engine.generateImage({ prompt: "a lighthouse at dawn", aspect: "9:16" });
+    expect(asset).toMatchObject({ kind: "image", origin: "generated", uri: `https://storage.test/public/generated/${asset.id}.png` });
+    expect(storage.files.get(`generated/${asset.id}.png`)).toMatchObject({ mimeType: "image/png" });
+    expect(image.requests[0]).toMatchObject({ aspect: "9:16" });
+    expect(image.requests[0]!.prompt).toMatch(/lighthouse.*No text, no logos/);
+    expect(await store.getMediaJob(asset.id)).toMatchObject({ kind: "image", status: "completed", assetId: asset.id });
+    expect(await store.mediaSpendUsd(monthStartIso(T0))).toBeCloseTo(0.04);
+  });
+
+  it("downloads a reference image and passes its bytes and type to the generator", async () => {
+    const { fn } = mockFetch([{ match: (u) => u === "https://cdn.test/product.jpg", reply: () => new Response(new Uint8Array([1, 2]), { headers: { "content-type": "image/jpeg" } }) }]);
+    const { engine, image } = imageSetup({ fetch: fn });
+    await engine.generateImage({ prompt: "on a wooden table", referenceImageUri: "https://cdn.test/product.jpg" });
+    expect(image.requests[0]!.reference).toEqual({ bytes: new Uint8Array([1, 2]), mimeType: "image/jpeg" });
+    expect(image.requests[0]!.prompt).toMatch(/reference image/);
+  });
+
+  it("shares the monthly cap with video, and refuses before calling the provider", async () => {
+    const { engine, image } = imageSetup({ cap: 0.05 });
+    await engine.generateImage({ prompt: "one" });
+    await expect(engine.generateImage({ prompt: "two" })).rejects.toBeInstanceOf(MediaCapReachedError);
+    expect(image.requests).toHaveLength(1);
+  });
+
+  it("records a provider failure as free and rethrows", async () => {
+    const image = new FakeImageGenerator();
+    image.error = new Error("blocked");
+    const { engine, store } = imageSetup({ image });
+    await expect(engine.generateImage({ prompt: "x" })).rejects.toThrow("blocked");
+    const [job] = await store.listMediaJobs();
+    expect(job).toMatchObject({ kind: "image", status: "failed", actualCostUsd: 0 });
+    expect(await store.mediaSpendUsd(monthStartIso(T0))).toBe(0);
+  });
+
+  it("tick closes an image job whose process died, without needing a video generator", async () => {
+    const { engine, store } = imageSetup();
+    await store.putMediaJob({
+      id: crypto.randomUUID(), kind: "image", provider: "p", model: "m", prompt: "x", status: "in_progress",
+      estimatedCostUsd: 0.04, createdAt: new Date(T0.getTime() - 20 * 60_000).toISOString(),
+    });
+    expect((await engine.tick()).media).toMatchObject({ failed: [expect.any(String)], pending: 0 });
+  });
+
+  it("validates before spending", async () => {
+    const { engine, image } = imageSetup();
+    await expect(engine.generateImage({ prompt: "x", referenceImageUri: "http://insecure.test/a.jpg" })).rejects.toThrow(/https/);
+    const bare = new ContentEngine({ store: new MemoryStore(), adapters: {}, generator: new FakeGenerator() });
+    await expect(bare.generateImage({ prompt: "x" })).rejects.toThrow(/GEMINI_API_KEY/);
+    expect(image.requests).toHaveLength(0);
+  });
+});
+
+describe("GeminiImageGenerator", () => {
+  const PNG_B64 = Buffer.from([137, 80, 78, 71]).toString("base64");
+  const ok = (parts: unknown[]) => json({ candidates: [{ content: { parts } }] });
+
+  it("sends the key in a header and asks for an image in the requested aspect ratio", async () => {
+    const { fn, calls } = mockFetch([{ match: (u) => u.includes(":generateContent"), reply: () => ok([{ text: "here" }, { inlineData: { mimeType: "image/png", data: PNG_B64 } }]) }]);
+    const g = new GeminiImageGenerator({ apiKey: "AIza-secret-key", fetch: fn });
+    const img = await g.generate({ prompt: "a fox", aspect: "9:16" });
+
+    expect(img).toEqual({ bytes: new Uint8Array([137, 80, 78, 71]), mimeType: "image/png" });
+    expect(calls[0]!.url).toBe("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent");
+    expect(calls[0]!.url).not.toContain("AIza"); // never in the URL
+    expect((calls[0]!.init!.headers as Record<string, string>)["x-goog-api-key"]).toBe("AIza-secret-key");
+    const body = JSON.parse(String(calls[0]!.init!.body));
+    expect(body.generationConfig).toEqual({ responseModalities: ["TEXT", "IMAGE"], imageConfig: { aspectRatio: "9:16" } });
+    expect(body.contents[0].parts).toEqual([{ text: "a fox" }]);
+  });
+
+  it("attaches a reference image as inline data, and reads snake_case responses too", async () => {
+    const { fn, calls } = mockFetch([{ match: () => true, reply: () => ok([{ inline_data: { mime_type: "image/jpeg", data: PNG_B64 } }]) }]);
+    const img = await new GeminiImageGenerator({ apiKey: "k-1234567", fetch: fn }).generate({
+      prompt: "edit", aspect: "1:1", reference: { bytes: new Uint8Array([1, 2, 3]), mimeType: "image/jpeg" },
+    });
+    expect(img.mimeType).toBe("image/jpeg");
+    expect(JSON.parse(String(calls[0]!.init!.body)).contents[0].parts[1]).toEqual({ inline_data: { mime_type: "image/jpeg", data: "AQID" } });
+  });
+
+  it("fails permanently when the answer has no image (blocked or text only)", async () => {
+    const run = (body: unknown) => new GeminiImageGenerator({ apiKey: "k-1234567", fetch: mockFetch([{ match: () => true, reply: () => json(body) }]).fn }).generate({ prompt: "x", aspect: "1:1" }).catch((e) => e);
+    expect(await run({ promptFeedback: { blockReason: "SAFETY" } })).toMatchObject({ permanent: true, message: expect.stringContaining("SAFETY") });
+    expect(await run({ candidates: [{ content: { parts: [{ text: "sorry" }] }, finishReason: "STOP" }] })).toMatchObject({ permanent: true });
+  });
+
+  it("classifies HTTP errors and never echoes the key", async () => {
+    const fail = (status: number, text: string) => new GeminiImageGenerator({ apiKey: "AIza-secret-key", fetch: mockFetch([{ match: () => true, reply: () => new Response(text, { status }) }]).fn }).generate({ prompt: "x", aspect: "1:1" }).catch((e) => e);
+    const bad = await fail(400, "API key not valid: AIza-secret-key");
+    expect(bad).toMatchObject({ permanent: true, status: 400 });
+    expect(bad.message).not.toContain("AIza-secret-key");
+    expect(await fail(429, "slow down")).toMatchObject({ permanent: false });
+    expect(await fail(503, "x")).toMatchObject({ permanent: false });
+  });
+
+  it("estimates a flat, configurable price", async () => {
+    expect((await new GeminiImageGenerator({ apiKey: "k" }).estimate()).usd).toBe(0.04);
+    expect((await new GeminiImageGenerator({ apiKey: "k", costPerImageUsd: 0.07 }).estimate()).usd).toBe(0.07);
+  });
+});

@@ -98,3 +98,23 @@ export class MemoryStorage implements MediaStorage {
     return `https://storage.test/public/${path}`;
   }
 }
+
+import type { GeneratedImage, ImageGenerator, ImageRequest } from "../src/media.js";
+
+export class FakeImageGenerator implements ImageGenerator {
+  readonly provider = "fake-image";
+  readonly model = "fake-model";
+  requests: ImageRequest[] = [];
+  estimateUsd = 0.04;
+  error?: Error;
+
+  async estimate(): Promise<MediaCost> {
+    return { usd: this.estimateUsd, isEstimate: true, source: "fake" };
+  }
+
+  async generate(req: ImageRequest): Promise<GeneratedImage> {
+    if (this.error) throw this.error;
+    this.requests.push(req);
+    return { bytes: new Uint8Array([137, 80, 78, 71]), mimeType: "image/png" };
+  }
+}

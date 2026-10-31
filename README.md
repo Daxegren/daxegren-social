@@ -29,6 +29,7 @@ export DATABASE_URL=...            # plus channel / ANTHROPIC_API_KEY variables,
 npm run social -- migrate
 npm run social -- add-asset image https://example.com/me.jpg        # your own photo/video
 npm run social -- media video "slow pan" --source https://example.com/product.jpg   # costs money, capped
+npm run social -- media image "a red mug on a wooden table" --aspect 4:5          # Gemini, costs money, capped
 npm run social -- generate "Why I build in public" --channels linkedin,instagram --assets <id>
 npm run social -- tick
 npm run social -- ingest instagram

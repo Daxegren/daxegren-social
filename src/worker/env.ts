@@ -1,3 +1,4 @@
+import { GeminiImageGenerator } from "../adapters/gemini-image.js";
 import { HiggsfieldVideoGenerator } from "../adapters/higgsfield.js";
 import { InstagramAdapter } from "../adapters/instagram.js";
 import { LinkedInAdapter } from "../adapters/linkedin.js";
@@ -55,6 +56,14 @@ export function buildEngine(env: Env, store: Store, opts: { fetch?: FetchLike; n
       now: opts.now,
       fetch: opts.fetch,
       mediaMonthlyCapUsd: cap,
+      imageGenerator: env.GEMINI_API_KEY
+        ? new GeminiImageGenerator({
+            apiKey: env.GEMINI_API_KEY,
+            model: env.GEMINI_IMAGE_MODEL,
+            costPerImageUsd: env.GEMINI_IMAGE_COST_USD ? Number(env.GEMINI_IMAGE_COST_USD) : undefined,
+            fetch: opts.fetch,
+          })
+        : undefined,
       videoGenerator: env.HIGGSFIELD_API_KEY ? new HiggsfieldVideoGenerator({ apiKey: env.HIGGSFIELD_API_KEY, fetch: opts.fetch }) : undefined,
       mediaStorage:
         env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY

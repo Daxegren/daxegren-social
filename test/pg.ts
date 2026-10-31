@@ -25,6 +25,7 @@ export async function freshDb() {
     await db.exec(migration("0001_init.sql"));
     await db.exec(migration("0002_review_access.sql"));
     await db.exec(migration("0003_media_jobs.sql"));
+    await db.exec(migration("0004_media_jobs_images.sql"));
     return db;
   })();
   const db = await shared;

@@ -29,7 +29,7 @@ describe("buildEngine", () => {
 describe("migrate", () => {
   it("applies every migration once and is a no-op the second time", async () => {
     const { sql } = await bareDb();
-    expect(await migrate(sql)).toEqual(["0001_init.sql", "0002_review_access.sql", "0003_media_jobs.sql"]);
+    expect(await migrate(sql)).toEqual(["0001_init.sql", "0002_review_access.sql", "0003_media_jobs.sql", "0004_media_jobs_images.sql"]);
     expect(await migrate(sql)).toEqual([]);
     const tables = await sql.query<{ n: number }>(`select count(*)::int as n from social_variants`);
     expect(tables[0]!.n).toBe(0);
@@ -163,12 +163,41 @@ describe("cli: own and generated media into drafts", () => {
     await expect(runCli(["add-asset", "image", "http://insecure.test/a.jpg"], { env: {}, sql })).rejects.toThrow(/https/);
     await expect(runCli(["add-asset", "gif", "https://x.test/a"], { env: {}, sql })).rejects.toThrow(/usage/);
     await expect(runCli(["media", "video", "x", "--source", "https://x.test/a.jpg"], { env: {}, sql })).rejects.toThrow(/HIGGSFIELD_API_KEY/);
-    await expect(runCli(["media", "image", "x"], { env: {}, sql })).rejects.toThrow(/usage/);
+    await expect(runCli(["media", "image", "x"], { env: {}, sql })).rejects.toThrow(/GEMINI_API_KEY/);
+    await expect(runCli(["media", "audio", "x"], { env: {}, sql })).rejects.toThrow(/usage/);
   });
 });
 
 describe("buildEngine: media", () => {
   it("rejects a non-numeric monthly cap", () => {
     expect(() => buildEngine({ MEDIA_MONTHLY_CAP_USD: "lots" }, new MemoryStore())).toThrow(/MEDIA_MONTHLY_CAP_USD/);
+  });
+});
+
+describe("cli: images", () => {
+  it("media image stores a Gemini image as a generated asset and accepts --aspect and --source", async () => {
+    const { sql } = await freshDb();
+    const png = Buffer.from([137, 80, 78, 71]).toString("base64");
+    const { fn, calls } = mockFetch([
+      { match: (u) => u === "https://cdn.test/p.jpg", reply: () => new Response(new Uint8Array([1]), { headers: { "content-type": "image/jpeg" } }) },
+      { match: (u) => u.includes(":generateContent"), reply: () => json({ candidates: [{ content: { parts: [{ inlineData: { mimeType: "image/png", data: png } }] } }] }) },
+      { match: (u) => u.includes("/storage/v1/"), reply: () => json({}) },
+    ]);
+    const env = { GEMINI_API_KEY: "AIza-test-key-1", SUPABASE_URL: "https://abc.supabase.co", SUPABASE_SERVICE_ROLE_KEY: "srv" };
+    const out = await runCli(["media", "image", "a fox on a hill", "--aspect", "9:16", "--source", "https://cdn.test/p.jpg"], { env, sql, fetch: fn });
+    const id = out.replace("asset ", "");
+
+    const [asset] = await sql.query<{ kind: string; origin: string }>(`select kind, origin from social_assets where id = $1`, [id]);
+    expect(asset).toEqual({ kind: "image", origin: "generated" });
+    const [job] = await sql.query<{ kind: string; status: string }>(`select kind, status from social_media_jobs where id = $1`, [id]);
+    expect(job).toEqual({ kind: "image", status: "completed" });
+    const gemini = calls.find((c) => c.url.includes(":generateContent"))!;
+    expect(JSON.parse(String(gemini.init!.body)).generationConfig.imageConfig.aspectRatio).toBe("9:16");
+  });
+
+  it("rejects an unsupported aspect ratio before spending", async () => {
+    const { sql } = await freshDb();
+    const env = { GEMINI_API_KEY: "AIza-test-key-1", SUPABASE_URL: "https://abc.supabase.co", SUPABASE_SERVICE_ROLE_KEY: "srv" };
+    await expect(runCli(["media", "image", "x", "--aspect", "3:7"], { env, sql })).rejects.toThrow(/--aspect/);
   });
 });

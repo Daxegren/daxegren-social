@@ -34,7 +34,7 @@ One repository, `@daxegren/social-engine`, standalone:
 | Adapters | `src/adapters/*` | One per channel: publish, ingest, metrics. Only place with platform specifics |
 | Analysis | `src/analyze.ts` | Engagement rate, best hours, length/media performance, time suggestion |
 | Generation | `src/generate.ts` | `ContentGenerator` (Claude implementation) |
-| Media | `src/media.ts`, `src/adapters/higgsfield.ts`, `src/adapters/supabase-storage.ts` | Paid video generation as persisted jobs: estimate, monthly cap, submit, poll, copy to durable storage, register as an `Asset` |
+| Media | `src/media.ts`, `src/adapters/higgsfield.ts`, `src/adapters/gemini-image.ts`, `src/adapters/supabase-storage.ts` | Paid video (Higgsfield) and image (Gemini) generation as persisted jobs: estimate, monthly cap, submit, poll, copy to durable storage, register as an `Asset` |
 | Scheduler | `src/scheduler.ts` | Claims due variants atomically, validates, publishes, retries with backoff |
 | Engine | `src/engine.ts` | Orchestrates everything above |
 | Worker | `src/worker/*` | Wires the engine from environment variables; CLI and migrations |
@@ -65,9 +65,11 @@ One repository, `@daxegren/social-engine`, standalone:
 | Facebook, TikTok, Pinterest, YouTube, X, Snapchat | not yet — implement `ChannelAdapter` | | |
 
 Video generation is ported from the `content.generate.media` capability in Ecomduct CoPilot (Higgsfield). Image
-generation is not: that implementation calls the Lovable AI Gateway, which only works inside Lovable.
+generation uses the Gemini API directly, because the Ecomduct CoPilot and Cockpit X implementations call OpenAI image
+models through the Lovable AI Gateway, which only works inside Lovable. The Gemini adapter has not yet been confirmed
+against a live key.
 
-Not built yet: image generation, Instagram carousels and richer insights (reach/saves), video
+Not built yet: Instagram carousels and richer insights (reach/saves), video
 upload flows for the other channels, recovery of variants stranded in `publishing`. Platform limits in
 `channels.ts` and API versions in the adapters should be checked against current platform documentation before
 production use.

@@ -1,3 +1,4 @@
+import { readFileSync, statSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { CHANNELS, type Channel } from "../domain.js";
 import { IMAGE_ASPECTS, type ImageAspect } from "../media.js";
@@ -5,6 +6,7 @@ import type { FetchLike } from "../adapters/types.js";
 import { PostgresStore, type SqlClient } from "../postgres-store.js";
 import { formatReport, runDoctor } from "./doctor.js";
 import { buildEngine, type Env } from "./env.js";
+import { parsePosts } from "./importer.js";
 import { migrate } from "./migrate.js";
 
 export const USAGE = `usage: social <command>
@@ -14,6 +16,8 @@ export const USAGE = `usage: social <command>
   tick                                      publish everything that is due
   ingest <channel>                          read published posts from a channel
   refresh-metrics <channel>                 update metrics on known posts
+  import <channel> <file.csv|file.json>     load posts you already published (with metrics, if you have them)
+           [--dry-run]
   add-asset <image|video> <https-url>       register a photo or video you made yourself; prints its id
   media video "<prompt>"                    generate a video (costs money; capped per month)
            [--source <https image url>] [--model <id>] [--async]
@@ -50,6 +54,7 @@ export async function runCli(argv: string[], deps: CliDeps): Promise<string> {
       model: { type: "string" },
       async: { type: "boolean" },
       aspect: { type: "string" },
+      "dry-run": { type: "boolean" },
     },
   });
   const [command, ...rest] = positionals;
@@ -73,6 +78,17 @@ export async function runCli(argv: string[], deps: CliDeps): Promise<string> {
     case "refresh-metrics": {
       const channel = channelArg(rest[0]);
       return `updated metrics on ${await engine.refreshMetrics(channel)} posts on ${channel}`;
+    }
+    case "import": {
+      const channel = channelArg(rest[0]);
+      const file = rest[1];
+      if (!file) throw new Error("usage: import <channel> <file.csv|file.json> [--dry-run]");
+      if (statSync(file).size > 5_000_000) throw new Error("the file is larger than 5 MB");
+      const { posts, skipped } = parsePosts(readFileSync(file, "utf8"), { channel, now: (deps.now ?? (() => new Date()))() });
+      if (!values["dry-run"]) await engine.importPosts(posts);
+      const withMetrics = posts.filter((p) => p.metrics).length;
+      const head = `${values["dry-run"] ? "would import" : "imported"} ${posts.length} post(s) into ${channel} (${withMetrics} with metrics)`;
+      return skipped.length ? `${head}; skipped ${skipped.length}:\n${skipped.slice(0, 20).map((s) => `  ${s.reason}`).join("\n")}${skipped.length > 20 ? `\n  …and ${skipped.length - 20} more` : ""}` : head;
     }
     case "add-asset": {
       const [kind, uri] = rest;

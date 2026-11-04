@@ -1,0 +1,38 @@
+name: Import published posts
+# Loads posts you already published (CSV or JSON, see docs/IMPORT.md) so the engine can learn from them.
+# Give it a public https link to the file. Safe to run again: the same post is never stored twice.
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: "Channel the posts were published on"
+        required: true
+        type: choice
+        options: [linkedin, instagram, facebook, tiktok, pinterest, youtube, snapchat, x]
+      url: { description: "Public https link to the CSV or JSON file", required: true }
+      dry_run: { description: "Only check the file, write nothing", required: false, type: boolean, default: true }
+concurrency:
+  group: social-worker
+  cancel-in-progress: false
+jobs:
+  import:
+    if: ${{ vars.SOCIAL_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npm run build
+      - name: Download the file
+        env:
+          URL: ${{ inputs.url }}
+        run: |
+          case "$URL" in https://*) ;; *) echo "the link must start with https://"; exit 1;; esac
+          curl --fail --silent --show-error --location --max-filesize 5000000 --output "$RUNNER_TEMP/posts" "$URL"
+      - run: node dist/worker/main.js import "$CHANNEL" "$RUNNER_TEMP/posts" ${DRY_RUN:+--dry-run}
+        env:
+          CHANNEL: ${{ inputs.channel }}
+          DRY_RUN: ${{ inputs.dry_run && 'true' || '' }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

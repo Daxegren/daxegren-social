@@ -34,8 +34,12 @@ image/video generation you connect later.
    insert into social_admins (user_id) values ('<your id from auth.users>');
    ```
 
-Also create the storage bucket once: Supabase → Storage → New bucket → name `social-media`, **public**.
-Files get unguessable uuid paths, and the platforms need a public URL to fetch media from anyway.
+The public storage bucket `social-media` is created by migration 0005 (images and video, 50 MB per file — Supabase's free
+plan caps single uploads at 50 MB as far as I know; check the current limit). Files get unguessable paths, and the
+platforms need a public URL to fetch media from anyway.
+
+After setting secrets, run the **Check setup** workflow. It is free and read-only: it checks the database, migrations,
+the bucket and every key you have set, and tells you what is wrong without ever printing a secret.
 
 ### 2. Review queue (Cloudflare Pages)
 
@@ -62,10 +66,13 @@ Then add the **variable** `SOCIAL_ENABLED` = `true`. Until it is set, none of th
 A channel is enabled when its secrets are present. Optional secret `AUTO_APPROVE_CHANNELS` (e.g. `linkedin`)
 skips review for those channels — leave it unset until you trust the output.
 
-Day to day:
+Day to day, from your phone:
 
-- **Your own photo or video:** upload it somewhere public over https (e.g. the same Storage bucket), then run
-  `npm run social -- add-asset image <url>` locally, or ask me to add a workflow for it. It prints an asset id.
+- **Skapa (in the review app):** take or pick a photo/video, say what the post is about, choose channels, press
+  *Beställ utkast*. The next `tick` (every 15 minutes, or run the **Publish due posts** workflow yourself) turns the
+  request into drafts, which appear under *Granskningskö › Utkast*. Failed requests show their reason in *Dina
+  beställningar*. HEIC photos are refused with a hint (iPhone: Settings › Camera › Formats › Most Compatible).
+- **Your own photo or video from a computer:** `npm run social -- add-asset image <public https url>` also works.
 - **Generated image:** Actions → **Generate image** (optionally with a reference photo URL). **Run it once first and read the log:** the Gemini adapter was written from memory of the API and has not been confirmed against a live key.
 - **Generated video:** Actions → **Generate video** → prompt, source image URL, model. It waits for the clip, stores it,
   and prints `asset <id>`. Costs money; refuses to start past the monthly cap. A clip that is still rendering when the
@@ -84,6 +91,8 @@ posts are published by the next tick.
 - **Video spend is bounded, not exact.** The cap counts started jobs at their estimate until the provider reports
   the real cost. Two jobs started at the same moment can together pass the cap slightly. Higgsfield does not
   always report actual cost, so figures are estimates.
+- **A request can strand too.** If a run is killed while it is drafting a request, the request stays at
+  *Skapar utkast…*. Order it again.
 - **A cancelled run can strand a post.** If a run is killed mid-publish the variant stays `publishing`
   (retrying automatically could post twice). Check the platform, then fix the row by hand.
 - **Public repo.** Code and docs are public. Secrets live only in Actions secrets and are not exposed to

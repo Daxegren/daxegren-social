@@ -217,3 +217,67 @@ describe("assets", () => {
     expect(instagram.published[0]!.assetIds).toEqual([photo.id]);
   });
 });
+
+describe("requests from the review app", () => {
+  async function requested(over: Partial<Parameters<MemoryStore["putBrief"]>[0]> = {}) {
+    const ctx = setup();
+    const brief = {
+      id: crypto.randomUUID(), idea: "from the phone", sourcePostIds: [], assetIds: [], channels: ["linkedin" as const],
+      status: "requested" as const, createdAt: T0.toISOString(), ...over,
+    };
+    await ctx.store.putBrief(brief);
+    return { ...ctx, brief };
+  }
+
+  it("tick turns a request into drafts and marks it ready", async () => {
+    const { engine, store, brief } = await requested();
+    const res = await engine.tick();
+    expect(res.requests).toEqual({ processed: [brief.id], failed: [] });
+    expect((await store.getBrief(brief.id))!.status).toBe("ready");
+    const drafts = await store.listVariants({ briefId: brief.id });
+    expect(drafts).toHaveLength(1);
+    expect(drafts[0]).toMatchObject({ channel: "linkedin", status: "draft" });
+  });
+
+  it("a request is drafted once even when two ticks overlap", async () => {
+    const { engine, store, brief } = await requested();
+    await Promise.all([engine.tick(), engine.tick()]);
+    expect(await store.listVariants({ briefId: brief.id })).toHaveLength(1);
+  });
+
+  it("a generator failure is written back to the request instead of crashing the tick", async () => {
+    const store = new MemoryStore();
+    const engine = new ContentEngine({
+      store, adapters: {}, now: () => T0,
+      generator: { generate: async () => { throw new Error("Claude is down"); } },
+    });
+    const id = crypto.randomUUID();
+    await store.putBrief({ id, idea: "x", sourcePostIds: [], assetIds: [], channels: ["linkedin"], status: "requested", createdAt: T0.toISOString() });
+    const res = await engine.tick();
+    expect(res.requests.failed).toEqual([id]);
+    expect(await store.getBrief(id)).toMatchObject({ status: "failed", error: "Claude is down" });
+    expect((await engine.tick()).requests).toEqual({ processed: [], failed: [] }); // not retried forever
+  });
+
+  it("leaves briefs that are not requests alone, and rejects a request without channels", async () => {
+    const { engine, store } = await requested({ status: "ready" });
+    expect((await engine.tick()).requests.processed).toEqual([]);
+    const id = crypto.randomUUID();
+    await store.putBrief({ id, idea: "x", sourcePostIds: [], assetIds: [], channels: [], status: "requested", createdAt: T0.toISOString() });
+    expect((await engine.tick()).requests.failed).toEqual([id]);
+    expect((await store.getBrief(id))!.error).toMatch(/no channels/);
+  });
+
+  it("uses the request's assets when drafting", async () => {
+    const ctx = setup();
+    const photo = await ctx.engine.addCapturedAsset("image", "https://cdn.example.test/me.jpg");
+    const seen: string[][] = [];
+    const engine = new ContentEngine({
+      store: ctx.store, adapters: {}, now: () => T0,
+      generator: { generate: async (i) => { seen.push(i.assets.map((a) => a.id)); return i.channels.map((channel) => ({ channel, text: "t", assetIds: [] })); } },
+    });
+    await ctx.store.putBrief({ id: crypto.randomUUID(), idea: "x", sourcePostIds: [], assetIds: [photo.id], channels: ["linkedin"], status: "requested", createdAt: T0.toISOString() });
+    await engine.tick();
+    expect(seen).toEqual([[photo.id]]);
+  });
+});

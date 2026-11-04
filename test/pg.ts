@@ -13,6 +13,15 @@ export const SUPABASE_STUB = `
     $$ select nullif(current_setting('test.uid', true), '')::uuid $$;
   grant usage on schema auth to authenticated;
   grant execute on function auth.uid() to authenticated;
+
+  create schema storage;
+  create table storage.buckets (id text primary key, name text not null, public boolean default false, file_size_limit bigint, allowed_mime_types text[]);
+  create table storage.objects (id uuid primary key default gen_random_uuid(), bucket_id text, name text, owner uuid);
+  alter table storage.objects enable row level security;
+  create function storage.foldername(name text) returns text[] language sql immutable as
+    $$ select (string_to_array(name, '/'))[1:cardinality(string_to_array(name, '/')) - 1] $$;
+  grant usage on schema storage to authenticated;
+  grant insert on storage.objects to authenticated;
 `;
 
 let shared: Promise<PGlite> | undefined;
@@ -26,11 +35,12 @@ export async function freshDb() {
     await db.exec(migration("0002_review_access.sql"));
     await db.exec(migration("0003_media_jobs.sql"));
     await db.exec(migration("0004_media_jobs_images.sql"));
+    await db.exec(migration("0005_requests_and_uploads.sql"));
     return db;
   })();
   const db = await shared;
   await db.exec(
-    `reset role; truncate social_media_jobs, social_admins, social_posts, social_variants, social_briefs, social_assets, auth.users cascade;`,
+    `reset role; truncate storage.objects, storage.buckets, social_media_jobs, social_admins, social_posts, social_variants, social_briefs, social_assets, auth.users cascade;`,
   );
   const sql: SqlClient = { query: async (text, params) => (await db.query(text, params)).rows as never };
   return { db, sql };

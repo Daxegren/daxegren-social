@@ -322,6 +322,7 @@ export class ContentEngine {
       goal: input.goal,
       sourcePostIds: input.sourcePostIds ?? [],
       assetIds: input.assetIds ?? [],
+      status: "ready",
       createdAt: this.now().toISOString(),
     };
     await this.store.putBrief(brief);
@@ -417,11 +418,37 @@ export class ContentEngine {
 
   // ── 5. Publish ────────────────────────────────────────────────────────
 
-  /** Call on an interval: publishes what is due and collects finished media. */
-  async tick(): Promise<TickResult & { media?: Awaited<ReturnType<ContentEngine["advanceMedia"]>> }> {
+  /**
+   * Turns requests made in the review app into drafts. A request is claimed atomically, so overlapping runs cannot
+   * draft it twice. A failure is written back to the request so it shows up in the app.
+   */
+  async processBriefRequests(): Promise<{ processed: string[]; failed: string[] }> {
+    const result = { processed: [] as string[], failed: [] as string[] };
+    for (const request of await this.store.listBriefs({ status: "requested" })) {
+      const claimed = await this.store.transitionBrief(request.id, "requested", "processing");
+      if (!claimed) continue;
+      try {
+        if (!claimed.channels?.length) throw new Error("the request has no channels");
+        const drafts = await this.proposeVariants(claimed.id, claimed.channels);
+        if (drafts.length === 0) throw new Error("the generator returned no drafts");
+        await this.store.putBrief({ ...claimed, status: "ready", error: undefined });
+        result.processed.push(claimed.id);
+      } catch (err) {
+        await this.store.putBrief({ ...claimed, status: "failed", error: (err as Error).message.slice(0, 500) });
+        result.failed.push(claimed.id);
+      }
+    }
+    return result;
+  }
+
+  /** Call on an interval: publishes what is due, drafts what was requested, and collects finished media. */
+  async tick(): Promise<
+    TickResult & { requests: Awaited<ReturnType<ContentEngine["processBriefRequests"]>>; media?: Awaited<ReturnType<ContentEngine["advanceMedia"]>> }
+  > {
     const published = await runDue(this.store, this.adapters, this.now(), this.cfg.scheduler);
+    const requests = await this.processBriefRequests();
     const media = (this.cfg.videoGenerator || this.cfg.imageGenerator) && this.cfg.mediaStorage ? await this.advanceMedia() : undefined;
-    return media ? { ...published, media } : published;
+    return media ? { ...published, requests, media } : { ...published, requests };
   }
 
   // ── helpers ───────────────────────────────────────────────────────────

@@ -1,5 +1,6 @@
 import type {
   Asset,
+  BriefStatus,
   Channel,
   ContentBrief,
   MediaJob,
@@ -24,6 +25,9 @@ export interface Store {
 
   putBrief(brief: ContentBrief): Promise<void>;
   getBrief(id: string): Promise<ContentBrief | undefined>;
+  listBriefs(filter?: { status?: BriefStatus; limit?: number }): Promise<ContentBrief[]>;
+  /** Atomic compare-and-swap on a brief's status. Returns the updated brief, or undefined if it was not in `from`. */
+  transitionBrief(id: string, from: BriefStatus, to: BriefStatus): Promise<ContentBrief | undefined>;
 
   putVariant(variant: PostVariant): Promise<void>;
   getVariant(id: string): Promise<PostVariant | undefined>;
@@ -87,12 +91,28 @@ export class MemoryStore implements Store {
   }
 
   async putBrief(brief: ContentBrief) {
-    this.briefs.set(brief.id, structuredClone(brief));
+    // Same default as the database column.
+    this.briefs.set(brief.id, structuredClone({ ...brief, status: brief.status ?? "ready" }));
   }
 
   async getBrief(id: string) {
     const b = this.briefs.get(id);
     return b ? structuredClone(b) : undefined;
+  }
+
+  async listBriefs(filter?: { status?: BriefStatus; limit?: number }) {
+    return [...this.briefs.values()]
+      .filter((b) => !filter?.status || (b.status ?? "ready") === filter.status)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+      .slice(0, filter?.limit)
+      .map((b) => structuredClone(b));
+  }
+
+  async transitionBrief(id: string, from: BriefStatus, to: BriefStatus) {
+    const b = this.briefs.get(id);
+    if (!b || (b.status ?? "ready") !== from) return undefined;
+    b.status = to;
+    return structuredClone(b);
   }
 
   async putVariant(variant: PostVariant) {

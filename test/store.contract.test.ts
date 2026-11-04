@@ -20,7 +20,7 @@ describe.each(makers)("Store contract: %s", (_name, make) => {
     store = await make();
   });
 
-  const brief = (): ContentBrief => ({ id: uuid(), idea: "i", angle: "a", sourcePostIds: [], assetIds: [], createdAt: T });
+  const brief = (): ContentBrief => ({ id: uuid(), idea: "i", angle: "a", sourcePostIds: [], assetIds: [], status: "ready", createdAt: T });
   const variant = (briefId: string, over: Partial<PostVariant> = {}): PostVariant => ({
     id: uuid(), briefId, channel: "linkedin", text: "t", assetIds: [], status: "draft", attempts: 0, createdAt: T, ...over,
   });
@@ -42,6 +42,26 @@ describe.each(makers)("Store contract: %s", (_name, make) => {
     await store.putBrief(b);
     expect(await store.getBrief(b.id)).toEqual(b);
     expect(await store.getBrief(uuid())).toBeUndefined();
+  });
+
+  it("briefs: requests round-trip with channels and status; list by status; atomic claim", async () => {
+    const request: ContentBrief = { ...brief(), idea: "from the app", channels: ["linkedin", "instagram"], status: "requested" };
+    const done: ContentBrief = { ...brief(), status: "failed", error: "boom" };
+    const direct = brief();
+    for (const b of [request, done, direct]) await store.putBrief(b);
+
+    expect(await store.getBrief(request.id)).toMatchObject({ channels: ["linkedin", "instagram"], status: "requested" });
+    expect(await store.getBrief(done.id)).toMatchObject({ status: "failed", error: "boom" });
+    expect((await store.listBriefs({ status: "requested" })).map((b) => b.id)).toEqual([request.id]);
+    expect((await store.listBriefs({ status: "ready" })).map((b) => b.id)).toEqual([direct.id]);
+    expect(await store.listBriefs({ limit: 2 })).toHaveLength(2);
+
+    const claims = await Promise.all([
+      store.transitionBrief(request.id, "requested", "processing"),
+      store.transitionBrief(request.id, "requested", "processing"),
+    ]);
+    expect(claims.filter(Boolean)).toHaveLength(1);
+    expect(await store.transitionBrief(request.id, "requested", "processing")).toBeUndefined();
   });
 
   it("round-trips variants, including optional fields, and filters by status and brief", async () => {

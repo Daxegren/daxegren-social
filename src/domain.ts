@@ -52,6 +52,9 @@ export interface PublishedPost {
   variantId?: string;
 }
 
+/** `requested` briefs come from the review app; the worker turns them into drafts. */
+export type BriefStatus = "requested" | "processing" | "ready" | "failed";
+
 export interface ContentBrief {
   id: string;
   idea: string;
@@ -61,6 +64,12 @@ export interface ContentBrief {
   sourcePostIds: string[];
   /** Owner-captured or generated assets available to attach. */
   assetIds: string[];
+  /** Channels to draft for. Set on requests. */
+  channels?: Channel[];
+  /** Absent means `ready` (briefs created directly by the engine). */
+  status?: BriefStatus;
+  /** Why a request failed. */
+  error?: string;
   createdAt: string;
 }
 

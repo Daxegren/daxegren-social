@@ -92,10 +92,74 @@ describe("review queue access (RLS)", () => {
     await expect(as(ADMIN, () => db.query(`update social_media_jobs set status = 'completed'`))).rejects.toThrow(/permission denied/);
   });
 
-  it("nobody authenticated can insert or delete", async () => {
+  it("nobody authenticated can delete, or insert where no insert is granted", async () => {
     await expect(as(ADMIN, () => db.query(`delete from social_variants where id = $1`, [draftId]))).rejects.toThrow(/permission denied/);
-    await expect(
-      as(ADMIN, () => db.query(`insert into social_briefs (idea) values ('x')`)),
-    ).rejects.toThrow(/permission denied/);
+    await expect(as(ADMIN, () => db.query(`insert into social_variants (brief_id, channel, body) values (gen_random_uuid(), 'x', 'y')`))).rejects.toThrow(/permission denied/);
+    await expect(as(ADMIN, () => db.query(`insert into social_media_jobs (kind, provider, model, prompt, estimated_cost_usd) values ('video','p','m','x',0)`))).rejects.toThrow(/permission denied/);
+  });
+});
+
+const PUBLIC_UPLOAD = (uid: string, file = "a.jpg") => `https://abc.supabase.co/storage/v1/object/public/social-media/uploads/${uid}/${file}`;
+
+describe("requests and uploads from the app (RLS)", () => {
+  const request = (channels = `array['linkedin','instagram']`, status = "requested") =>
+    `insert into social_briefs (idea, channels, status) values ('an idea', ${channels}, '${status}') returning id, status`;
+
+  it("a reviewer can request drafts, and the request starts as 'requested'", async () => {
+    const res = await as(ADMIN, () => db.query(request()));
+    expect(res.rows).toEqual([{ id: expect.any(String), status: "requested" }]);
+    expect((await as(ADMIN, () => db.query(`select count(*)::int as n from social_briefs where status = 'requested'`))).rows).toEqual([{ n: 1 }]);
+  });
+
+  it("anyone else is refused", async () => {
+    await expect(as(STRANGER, () => db.query(request()))).rejects.toThrow(/row-level security/);
+  });
+
+  it("a reviewer cannot insert a brief in any other state, or write results", async () => {
+    for (const status of ["ready", "processing", "failed"]) {
+      await expect(as(ADMIN, () => db.query(request(`array['linkedin']`, status)))).rejects.toThrow(/row-level security/);
+    }
+    await expect(as(ADMIN, () => db.query(`insert into social_briefs (idea, channels, status, error) values ('x', array['x'], 'requested', 'e')`))).rejects.toThrow(/permission denied/);
+    await expect(as(ADMIN, () => db.query(`update social_briefs set status = 'ready'`))).rejects.toThrow(/permission denied/);
+  });
+
+  it("rejects requests with unknown, empty or missing channels, and oversized ideas", async () => {
+    await expect(as(ADMIN, () => db.query(request(`array['myspace']`)))).rejects.toThrow(/social_briefs_requested_valid/);
+    await expect(as(ADMIN, () => db.query(request(`array[]::text[]`)))).rejects.toThrow(/social_briefs_requested_valid/);
+    await expect(as(ADMIN, () => db.query(request(`null`)))).rejects.toThrow(/social_briefs_requested_valid/);
+    await expect(as(ADMIN, () => db.query(`insert into social_briefs (idea, channels, status) values ('${"x".repeat(2001)}', array['x'], 'requested')`))).rejects.toThrow(/social_briefs_idea_length/);
+  });
+
+  it("a reviewer can register an upload from this project's media folder, as 'captured' only", async () => {
+    const ok = await as(ADMIN, () => db.query(`insert into social_assets (kind, origin, uri) values ('image', 'captured', '${PUBLIC_UPLOAD(ADMIN)}') returning id`));
+    expect(ok.rows).toHaveLength(1);
+    await expect(as(ADMIN, () => db.query(`insert into social_assets (kind, origin, uri) values ('image', 'generated', '${PUBLIC_UPLOAD(ADMIN)}')`))).rejects.toThrow(/row-level security/);
+  });
+
+  it("refuses assets that point anywhere else, including a link with a query string", async () => {
+    for (const uri of ["https://evil.example/x.jpg", "http://abc.supabase.co/storage/v1/object/public/social-media/uploads/a.jpg",
+      "https://abc.supabase.co/storage/v1/object/public/other-bucket/uploads/a.jpg", `${PUBLIC_UPLOAD(ADMIN)}?token=1`]) {
+      await expect(as(ADMIN, () => db.query(`insert into social_assets (kind, origin, uri) values ('image', 'captured', '${uri}')`)), uri).rejects.toThrow(/row-level security/);
+    }
+    await expect(as(STRANGER, () => db.query(`insert into social_assets (kind, origin, uri) values ('image', 'captured', '${PUBLIC_UPLOAD(STRANGER)}')`))).rejects.toThrow(/row-level security/);
+  });
+
+  it("a reviewer can upload only into uploads/<own id>/ in the media bucket", async () => {
+    const put = (uid: string, bucket: string, name: string) =>
+      as(uid, () => db.query(`insert into storage.objects (bucket_id, name) values ('${bucket}', '${name}')`));
+    await expect(put(ADMIN, "social-media", `uploads/${ADMIN}/a.jpg`)).resolves.toBeDefined();
+    await expect(put(ADMIN, "social-media", `uploads/${STRANGER}/a.jpg`)).rejects.toThrow(/row-level security/); // someone else's folder
+    await expect(put(ADMIN, "social-media", `generated/a.jpg`)).rejects.toThrow(/row-level security/); // the worker's folder
+    await expect(put(ADMIN, "other-bucket", `uploads/${ADMIN}/a.jpg`)).rejects.toThrow(/row-level security/);
+    await expect(put(STRANGER, "social-media", `uploads/${STRANGER}/a.jpg`)).rejects.toThrow(/row-level security/); // not a reviewer
+  });
+
+  it("the migration creates the public media bucket", async () => {
+    const { migrate } = await import("../src/worker/migrate.js");
+    const { bareDb } = await import("./pg.js");
+    const fresh = await bareDb();
+    await migrate(fresh.sql);
+    const rows = (await fresh.db.query(`select id, public, file_size_limit::int as limit, allowed_mime_types from storage.buckets`)).rows;
+    expect(rows).toEqual([{ id: "social-media", public: true, limit: 52428800, allowed_mime_types: ["image/*", "video/*"] }]);
   });
 });

@@ -29,7 +29,7 @@ describe("buildEngine", () => {
 describe("migrate", () => {
   it("applies every migration once and is a no-op the second time", async () => {
     const { sql } = await bareDb();
-    expect(await migrate(sql)).toEqual(["0001_init.sql", "0002_review_access.sql", "0003_media_jobs.sql", "0004_media_jobs_images.sql"]);
+    expect(await migrate(sql)).toEqual(["0001_init.sql", "0002_review_access.sql", "0003_media_jobs.sql", "0004_media_jobs_images.sql", "0005_requests_and_uploads.sql"]);
     expect(await migrate(sql)).toEqual([]);
     const tables = await sql.query<{ n: number }>(`select count(*)::int as n from social_variants`);
     expect(tables[0]!.n).toBe(0);

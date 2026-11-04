@@ -6,9 +6,10 @@ content from a brief (using my own photos and videos, generated media, or both),
 
 - Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - Deploy, setup and running costs: [docs/DEPLOY.md](docs/DEPLOY.md)
+- Importing posts you already published: [docs/IMPORT.md](docs/IMPORT.md)
 
 ```
-Generate drafts (GitHub Actions form) → review queue (web/) → tick publishes → learn → better drafts
+Skapa in the app (photo + idea + channels) → tick drafts it → review queue → tick publishes → learn → better drafts
 ```
 
 ## Develop
@@ -26,7 +27,9 @@ npm run build:web
 ```bash
 npm run build
 export DATABASE_URL=...            # plus channel / ANTHROPIC_API_KEY variables, see docs/DEPLOY.md
+npm run social -- doctor           # free, read-only check of the whole setup
 npm run social -- migrate
+npm run social -- import linkedin posts.csv --dry-run   # learn from posts you already published, see docs/IMPORT.md
 npm run social -- add-asset image https://example.com/me.jpg        # your own photo/video
 npm run social -- media video "slow pan" --source https://example.com/product.jpg   # costs money, capped
 npm run social -- media image "a red mug on a wooden table" --aspect 4:5          # Gemini, costs money, capped

@@ -1,6 +1,7 @@
 import type {
   Asset,
   AssetKind,
+  BriefStatus,
   Channel,
   ContentBrief,
   MediaJob,
@@ -54,6 +55,9 @@ function toBrief(r: Row): ContentBrief {
     goal: opt(r.goal),
     sourcePostIds: r.source_post_ids,
     assetIds: r.asset_ids,
+    channels: opt(r.channels),
+    status: r.status,
+    error: opt(r.error),
     createdAt: iso(r.created_at)!,
   };
 }
@@ -150,16 +154,30 @@ export class PostgresStore implements Store {
 
   async putBrief(b: ContentBrief) {
     await this.sql.query(
-      `insert into social_briefs (id, idea, angle, goal, source_post_ids, asset_ids, created_at)
-       values ($1, $2, $3, $4, $5::uuid[], $6::uuid[], $7)
+      `insert into social_briefs (id, idea, angle, goal, source_post_ids, asset_ids, channels, status, error, created_at)
+       values ($1, $2, $3, $4, $5::uuid[], $6::uuid[], $7::text[], $8, $9, $10)
        on conflict (id) do update set idea = excluded.idea, angle = excluded.angle, goal = excluded.goal,
-         source_post_ids = excluded.source_post_ids, asset_ids = excluded.asset_ids`,
-      [b.id, b.idea, b.angle ?? null, b.goal ?? null, b.sourcePostIds, b.assetIds, b.createdAt],
+         source_post_ids = excluded.source_post_ids, asset_ids = excluded.asset_ids,
+         channels = excluded.channels, status = excluded.status, error = excluded.error`,
+      [b.id, b.idea, b.angle ?? null, b.goal ?? null, b.sourcePostIds, b.assetIds, b.channels ?? null, b.status ?? "ready", b.error ?? null, b.createdAt],
     );
   }
 
   async getBrief(id: string) {
     const rows = await this.sql.query<Row>(`select * from social_briefs where id = $1`, [id]);
+    return rows[0] ? toBrief(rows[0]) : undefined;
+  }
+
+  async listBriefs(filter?: { status?: BriefStatus; limit?: number }) {
+    const rows = await this.sql.query<Row>(
+      `select * from social_briefs where ($1::text is null or status = $1) order by created_at limit $2`,
+      [filter?.status ?? null, filter?.limit ?? 1000],
+    );
+    return rows.map(toBrief);
+  }
+
+  async transitionBrief(id: string, from: BriefStatus, to: BriefStatus) {
+    const rows = await this.sql.query<Row>(`update social_briefs set status = $3 where id = $1 and status = $2 returning *`, [id, from, to]);
     return rows[0] ? toBrief(rows[0]) : undefined;
   }
 

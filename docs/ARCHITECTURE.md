@@ -18,7 +18,7 @@ One repository, `@daxegren/social-engine`, standalone:
 
 - `src/` — the engine: a framework-free TypeScript library (global `fetch` and `crypto`, no runtime
   dependencies; `pg` is only used by the worker).
-- `src/worker/` — the command line the automation runs: `migrate`, `tick`, `ingest`, `refresh-metrics`, `generate`.
+- `src/worker/` — the command line the automation runs: `doctor`, `migrate`, `tick`, `ingest`, `import`, `refresh-metrics`, `add-asset`, `media`, `generate`.
 - `web/` — the review queue: a static React app that talks to Supabase directly and imports the channel
   rules from `src/`, so it validates with exactly the rules the scheduler enforces.
 - `db/migrations/` — the Postgres schema and the row-level-security rules the browser relies on.
@@ -39,6 +39,8 @@ One repository, `@daxegren/social-engine`, standalone:
 | Engine | `src/engine.ts` | Orchestrates everything above |
 | Worker | `src/worker/*` | Wires the engine from environment variables; CLI and migrations |
 | Review queue | `web/` | Edit, schedule, approve or reject drafts; read-only views of the rest |
+| Create | `web/src/CreateView.tsx` | Mobile-first: upload own media, describe the post, pick channels, order drafts |
+| Doctor, import | `src/worker/doctor.ts`, `src/worker/importer.ts` | Free setup check; load previously published posts from CSV/JSON (see [IMPORT.md](IMPORT.md)) |
 
 ## Decisions
 
@@ -47,6 +49,12 @@ One repository, `@daxegren/social-engine`, standalone:
 - **No double posts.** A variant is claimed with an atomic `scheduled → publishing` transition before the
   network call. If a worker dies mid-publish the variant stays `publishing` and needs a manual look,
   because retrying automatically could duplicate a post that actually went out.
+- **The browser can only do narrow things.** A reviewer can edit and approve drafts, upload into their own
+  `uploads/<user id>/` folder, register such an upload as a *captured* asset, and create a brief as a *request*.
+  Everything else (drafting, publishing, generating media, results) happens in the worker with the service role.
+  Each of these is enforced in the database (row-level security and storage policies) and covered by tests.
+- **Requests, not remote calls.** The app cannot trigger the worker (that would need a secret in the browser), so
+  it writes a request row; `tick` claims it atomically and turns it into drafts, or records why it failed.
 - **Retryable vs permanent errors.** 429/5xx/network errors retry with backoff; other 4xx fail immediately.
 - **Paid work is persisted before it is paid for.** A media job row exists before the provider is called, and the
   provider's job id is saved right after submitting, so a finished clip can always be collected by a later `tick`.

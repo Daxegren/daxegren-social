@@ -1,7 +1,8 @@
 import type { Session } from "@supabase/supabase-js";
 import { useEffect, useMemo, useState } from "react";
 import { supabase, supabaseConfigured } from "./lib/supabase";
-import { supabaseSocialApi } from "./api";
+import { supabaseCreateApi, supabaseSocialApi } from "./api";
+import { CreateView } from "./CreateView";
 import { ReviewQueue } from "./ReviewQueue";
 
 function Login() {
@@ -39,6 +40,8 @@ function Login() {
 export default function App() {
   const [session, setSession] = useState<Session | null | undefined>(undefined);
   const api = useMemo(() => supabaseSocialApi(supabase), []);
+  const createApi = useMemo(() => supabaseCreateApi(supabase), []);
+  const [tab, setTab] = useState<"review" | "create">("review");
 
   useEffect(() => {
     void supabase.auth.getSession().then(({ data }) => setSession(data.session));
@@ -64,9 +67,19 @@ export default function App() {
           Logga ut
         </button>
       </header>
-      <main className="mx-auto max-w-3xl p-4">
-        <ReviewQueue api={api} />
-      </main>
+      <nav className="flex gap-1 border-b border-slate-200 bg-white px-4" aria-label="Huvudmeny">
+        {([["review", "Granskningskö"], ["create", "Skapa"]] as const).map(([key, label]) => (
+          <button
+            key={key}
+            aria-current={tab === key ? "page" : undefined}
+            className={`-mb-px border-b-2 px-3 py-3 text-sm ${tab === key ? "border-slate-900 font-medium text-slate-900" : "border-transparent text-slate-500"}`}
+            onClick={() => setTab(key)}
+          >
+            {label}
+          </button>
+        ))}
+      </nav>
+      <main className="mx-auto max-w-3xl p-4">{tab === "review" ? <ReviewQueue api={api} /> : <CreateView api={createApi} />}</main>
     </div>
   );
 }

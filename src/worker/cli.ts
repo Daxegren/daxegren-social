@@ -3,11 +3,13 @@ import { CHANNELS, type Channel } from "../domain.js";
 import { IMAGE_ASPECTS, type ImageAspect } from "../media.js";
 import type { FetchLike } from "../adapters/types.js";
 import { PostgresStore, type SqlClient } from "../postgres-store.js";
+import { formatReport, runDoctor } from "./doctor.js";
 import { buildEngine, type Env } from "./env.js";
 import { migrate } from "./migrate.js";
 
 export const USAGE = `usage: social <command>
 
+  doctor                                    check the setup (free, read-only, never prints secrets)
   migrate                                   apply database migrations
   tick                                      publish everything that is due
   ingest <channel>                          read published posts from a channel
@@ -51,6 +53,12 @@ export async function runCli(argv: string[], deps: CliDeps): Promise<string> {
     },
   });
   const [command, ...rest] = positionals;
+  if (command === "doctor") {
+    const checks = await runDoctor({ env: deps.env, sql: deps.sql, fetch: deps.fetch, now: deps.now });
+    const report = formatReport(checks);
+    if (checks.some((c) => c.status === "fail")) throw new Error(report);
+    return report;
+  }
   if (command === "migrate") return `applied: ${JSON.stringify(await migrate(deps.sql))}`;
 
   const { engine, configuredChannels } = buildEngine(deps.env, new PostgresStore(deps.sql), { fetch: deps.fetch, now: deps.now });

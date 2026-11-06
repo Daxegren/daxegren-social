@@ -180,7 +180,7 @@ describe("cli: images", () => {
     const png = Buffer.from([137, 80, 78, 71]).toString("base64");
     const { fn, calls } = mockFetch([
       { match: (u) => u === "https://cdn.test/p.jpg", reply: () => new Response(new Uint8Array([1]), { headers: { "content-type": "image/jpeg" } }) },
-      { match: (u) => u.includes(":generateContent"), reply: () => json({ candidates: [{ content: { parts: [{ inlineData: { mimeType: "image/png", data: png } }] } }] }) },
+      { match: (u) => u.endsWith("/v1beta/interactions"), reply: () => json({ steps: [{ type: "model_output", content: [{ type: "image", data: png, mime_type: "image/png" }] }] }) },
       { match: (u) => u.includes("/storage/v1/"), reply: () => json({}) },
     ]);
     const env = { GEMINI_API_KEY: "AIza-test-key-1", SUPABASE_URL: "https://abc.supabase.co", SUPABASE_SERVICE_ROLE_KEY: "srv" };
@@ -191,8 +191,8 @@ describe("cli: images", () => {
     expect(asset).toEqual({ kind: "image", origin: "generated" });
     const [job] = await sql.query<{ kind: string; status: string }>(`select kind, status from social_media_jobs where id = $1`, [id]);
     expect(job).toEqual({ kind: "image", status: "completed" });
-    const gemini = calls.find((c) => c.url.includes(":generateContent"))!;
-    expect(JSON.parse(String(gemini.init!.body)).generationConfig.imageConfig.aspectRatio).toBe("9:16");
+    const gemini = calls.find((c) => c.url.endsWith("/v1beta/interactions"))!;
+    expect(JSON.parse(String(gemini.init!.body)).response_format).toMatchObject({ aspect_ratio: "9:16", mime_type: "image/jpeg" });
   });
 
   it("rejects an unsupported aspect ratio before spending", async () => {

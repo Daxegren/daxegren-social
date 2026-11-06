@@ -75,6 +75,7 @@ export function buildEngine(env: Env, store: Store, opts: { fetch?: FetchLike; n
         ? new GeminiImageGenerator({
             apiKey: env.GEMINI_API_KEY,
             model: env.GEMINI_IMAGE_MODEL,
+            apiRevision: env.GEMINI_API_REVISION,
             costPerImageUsd: env.GEMINI_IMAGE_COST_USD ? Number(env.GEMINI_IMAGE_COST_USD) : undefined,
             fetch: opts.fetch,
           })

@@ -58,10 +58,10 @@ Repository → Settings → Secrets and variables → Actions:
 | `LINKEDIN_AUTHOR_URN`, `LINKEDIN_ACCESS_TOKEN` | publishing to LinkedIn |
 | `INSTAGRAM_USER_ID`, `INSTAGRAM_ACCESS_TOKEN` | publishing to / learning from Instagram |
 | `HIGGSFIELD_API_KEY` (`KEY_ID:KEY_SECRET`) | generating video |
-| `GEMINI_API_KEY` | generating images. A key from **Google AI Studio**, with its own billing — a consumer Gemini subscription is not an API key |
+| `GEMINI_API_KEY` | generating images. A key from **Google AI Studio** on a **billed** project — Google's pricing page lists image generation as not available on the free tier, and a consumer Gemini subscription is not an API key |
 | `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | storing generated video. **Service-role key: Actions secret only, never in the browser** |
 
-Optional variables `GEMINI_IMAGE_MODEL` (default `gemini-2.5-flash-image`) and `GEMINI_IMAGE_COST_USD` (default 0.04) — check Google's current model list and prices. Optional **notifications** to your phone: set the secret `NOTIFY_URL` and the variable `APP_URL` (the review app's address,
+Optional variables `GEMINI_IMAGE_MODEL` (default `gemini-nano-banana-2.1`, Google's recommended image model; `gemini-2.5-flash-image` is marked legacy), `GEMINI_IMAGE_COST_USD` (default 0.04; Google's published price for a 1K image is 0.0336 plus input tokens) and `GEMINI_API_REVISION` (default `2026-05-20`, a header the Interactions API asks for) — check Google's current docs. Optional **notifications** to your phone: set the secret `NOTIFY_URL` and the variable `APP_URL` (the review app's address,
 so a tap opens it). The simplest way is [ntfy](https://ntfy.sh): install the ntfy app, subscribe to a long random
 topic name, and use `https://ntfy.sh/<that-topic>` as `NOTIFY_URL` — the topic name is the only protection, so treat
 the address as a secret. Slack and Discord webhook addresses work too (`NOTIFY_FORMAT` overrides the detection).
@@ -82,7 +82,7 @@ Day to day, from your phone:
   request into drafts, which appear under *Granskningskö › Utkast*. Failed requests show their reason in *Dina
   beställningar*. HEIC photos are refused with a hint (iPhone: Settings › Camera › Formats › Most Compatible).
 - **Your own photo or video from a computer:** `npm run social -- add-asset image <public https url>` also works.
-- **Generated image:** Actions → **Generate image** (optionally with a reference photo URL). **Run it once first and read the log:** the Gemini adapter was written from memory of the API and has not been confirmed against a live key.
+- **Generated image:** Actions → **Generate image** (optionally with a reference photo URL). **Run it once first and read the log:** the Gemini adapter follows Google's current documentation (the Interactions API) but has not been run against a live key.
 - **Generated video:** Actions → **Generate video** → prompt, source image URL, model. It waits for the clip, stores it,
   and prints `asset <id>`. Costs money; refuses to start past the monthly cap. A clip that is still rendering when the
   job times out is collected by the next `tick`.

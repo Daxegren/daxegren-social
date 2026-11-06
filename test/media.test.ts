@@ -313,37 +313,55 @@ describe("engine: image generation", () => {
   });
 });
 
-describe("GeminiImageGenerator", () => {
-  const PNG_B64 = Buffer.from([137, 80, 78, 71]).toString("base64");
-  const ok = (parts: unknown[]) => json({ candidates: [{ content: { parts } }] });
+describe("GeminiImageGenerator (Interactions API)", () => {
+  const JPG_B64 = Buffer.from([255, 216, 255, 224]).toString("base64");
+  const answer = (...blocks: unknown[]) => json({ id: "int_1", steps: [{ type: "model_output", content: blocks }] });
+  const URL_ = "https://generativelanguage.googleapis.com/v1beta/interactions";
 
-  it("sends the key in a header and asks for an image in the requested aspect ratio", async () => {
-    const { fn, calls } = mockFetch([{ match: (u) => u.includes(":generateContent"), reply: () => ok([{ text: "here" }, { inlineData: { mimeType: "image/png", data: PNG_B64 } }]) }]);
-    const g = new GeminiImageGenerator({ apiKey: "AIza-secret-key", fetch: fn });
-    const img = await g.generate({ prompt: "a fox", aspect: "9:16" });
+  it("posts to /v1beta/interactions with the key and revision in headers, asking for a 1K JPEG in the right ratio", async () => {
+    const { fn, calls } = mockFetch([{ match: (u) => u === URL_, reply: () => answer({ type: "image", data: JPG_B64, mime_type: "image/jpeg" }) }]);
+    const img = await new GeminiImageGenerator({ apiKey: "AIza-secret-key", fetch: fn }).generate({ prompt: "a fox", aspect: "9:16" });
 
-    expect(img).toEqual({ bytes: new Uint8Array([137, 80, 78, 71]), mimeType: "image/png" });
-    expect(calls[0]!.url).toBe("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent");
+    expect(img).toEqual({ bytes: new Uint8Array([255, 216, 255, 224]), mimeType: "image/jpeg" });
     expect(calls[0]!.url).not.toContain("AIza"); // never in the URL
-    expect((calls[0]!.init!.headers as Record<string, string>)["x-goog-api-key"]).toBe("AIza-secret-key");
-    const body = JSON.parse(String(calls[0]!.init!.body));
-    expect(body.generationConfig).toEqual({ responseModalities: ["TEXT", "IMAGE"], imageConfig: { aspectRatio: "9:16" } });
-    expect(body.contents[0].parts).toEqual([{ text: "a fox" }]);
-  });
-
-  it("attaches a reference image as inline data, and reads snake_case responses too", async () => {
-    const { fn, calls } = mockFetch([{ match: () => true, reply: () => ok([{ inline_data: { mime_type: "image/jpeg", data: PNG_B64 } }]) }]);
-    const img = await new GeminiImageGenerator({ apiKey: "k-1234567", fetch: fn }).generate({
-      prompt: "edit", aspect: "1:1", reference: { bytes: new Uint8Array([1, 2, 3]), mimeType: "image/jpeg" },
+    expect(calls[0]!.init!.headers).toMatchObject({ "x-goog-api-key": "AIza-secret-key", "Api-Revision": "2026-05-20", "Content-Type": "application/json" });
+    expect(JSON.parse(String(calls[0]!.init!.body))).toEqual({
+      model: "gemini-nano-banana-2.1",
+      input: [{ type: "text", text: "a fox" }],
+      response_format: { type: "image", mime_type: "image/jpeg", aspect_ratio: "9:16", image_size: "1K" },
     });
-    expect(img.mimeType).toBe("image/jpeg");
-    expect(JSON.parse(String(calls[0]!.init!.body)).contents[0].parts[1]).toEqual({ inline_data: { mime_type: "image/jpeg", data: "AQID" } });
   });
 
-  it("fails permanently when the answer has no image (blocked or text only)", async () => {
+  it("sends a reference image as an image block with base64 data", async () => {
+    const { fn, calls } = mockFetch([{ match: () => true, reply: () => answer({ type: "image", data: JPG_B64 }) }]);
+    const img = await new GeminiImageGenerator({ apiKey: "k-1234567", fetch: fn, model: "gemini-3-pro-image", apiRevision: "2027-01-01" }).generate({
+      prompt: "edit", aspect: "4:5", reference: { bytes: new Uint8Array([1, 2, 3]), mimeType: "image/png" },
+    });
+    expect(img.mimeType).toBe("image/jpeg"); // default when the block does not say
+    const body = JSON.parse(String(calls[0]!.init!.body));
+    expect(body.model).toBe("gemini-3-pro-image");
+    expect(body.input[1]).toEqual({ type: "image", mime_type: "image/png", data: "AQID" });
+    expect((calls[0]!.init!.headers as Record<string, string>)["Api-Revision"]).toBe("2027-01-01");
+  });
+
+  it("takes the last image of the model's output and ignores thoughts and other steps", async () => {
+    const { fn } = mockFetch([{
+      match: () => true,
+      reply: () => json({ steps: [
+        { type: "thought", content: [{ type: "image", data: Buffer.from("thought").toString("base64") }] },
+        { type: "model_output", content: [{ type: "text", text: "Här är den" }, { type: "image", data: Buffer.from("first").toString("base64") }] },
+        { type: "model_output", content: [{ type: "image", data: Buffer.from("last").toString("base64"), mime_type: "image/png" }] },
+      ] }),
+    }]);
+    const img = await new GeminiImageGenerator({ apiKey: "k-1234567", fetch: fn }).generate({ prompt: "x", aspect: "1:1" });
+    expect(Buffer.from(img.bytes).toString()).toBe("last");
+    expect(img.mimeType).toBe("image/png");
+  });
+
+  it("fails permanently when there is no image, and reports what the model said instead", async () => {
     const run = (body: unknown) => new GeminiImageGenerator({ apiKey: "k-1234567", fetch: mockFetch([{ match: () => true, reply: () => json(body) }]).fn }).generate({ prompt: "x", aspect: "1:1" }).catch((e) => e);
-    expect(await run({ promptFeedback: { blockReason: "SAFETY" } })).toMatchObject({ permanent: true, message: expect.stringContaining("SAFETY") });
-    expect(await run({ candidates: [{ content: { parts: [{ text: "sorry" }] }, finishReason: "STOP" }] })).toMatchObject({ permanent: true });
+    expect(await run({ steps: [{ type: "model_output", content: [{ type: "text", text: "Jag kan inte skapa den bilden." }] }] })).toMatchObject({ permanent: true, message: expect.stringContaining("Jag kan inte skapa") });
+    expect(await run({})).toMatchObject({ permanent: true, message: "Gemini returned no image" });
   });
 
   it("classifies HTTP errors and never echoes the key", async () => {

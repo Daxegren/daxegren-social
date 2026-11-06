@@ -34,6 +34,7 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_IMAGE_MODEL: ${{ vars.GEMINI_IMAGE_MODEL }}
+          GEMINI_API_REVISION: ${{ vars.GEMINI_API_REVISION }}
           GEMINI_IMAGE_COST_USD: ${{ vars.GEMINI_IMAGE_COST_USD }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}

@@ -76,8 +76,8 @@ One repository, `@daxegren/social-engine`, standalone:
 
 Video generation is ported from the `content.generate.media` capability in Ecomduct CoPilot (Higgsfield). Image
 generation uses the Gemini API directly, because the Ecomduct CoPilot and Cockpit X implementations call OpenAI image
-models through the Lovable AI Gateway, which only works inside Lovable. The Gemini adapter has not yet been confirmed
-against a live key.
+models through the Lovable AI Gateway, which only works inside Lovable. The Gemini adapter follows Google's documentation of
+the Interactions API (checked 2026-11-06) but has not yet been run against a live key.
 
 Not built yet: richer insights (reach/saves), video
 upload flows for the other channels. The Facebook adapter and the Instagram carousel were written from memory of the Graph API and have not been

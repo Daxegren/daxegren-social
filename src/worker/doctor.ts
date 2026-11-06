@@ -1,6 +1,7 @@
 import type { FetchLike } from "../adapters/types.js";
 import { PostgresStore, type SqlClient } from "../postgres-store.js";
 import { DEFAULT_MONTHLY_CAP_USD, monthStartIso } from "../media.js";
+import { DEFAULT_GEMINI_IMAGE_MODEL } from "../adapters/gemini-image.js";
 import { buildEngine, type Env } from "./env.js";
 import { migrationFiles } from "./migrate.js";
 
@@ -122,12 +123,12 @@ export async function runDoctor(deps: DoctorDeps): Promise<Check[]> {
     const res = await f("https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000", { headers: { "x-goog-api-key": env.GEMINI_API_KEY } });
     if (res.status === 400 || res.status === 401 || res.status === 403) return fail("gemini", `key rejected (HTTP ${res.status}). It must be a Google AI Studio API key, not a Gemini subscription`);
     if (!res.ok) return fail("gemini", `HTTP ${res.status}`);
-    const models = ((await res.json()) as { models?: Array<{ name: string; supportedGenerationMethods?: string[] }> }).models ?? [];
-    const wanted = env.GEMINI_IMAGE_MODEL ?? "gemini-2.5-flash-image";
-    const found = models.find((m) => m.name === `models/${wanted}`);
-    if (found && found.supportedGenerationMethods?.includes("generateContent") !== false) return ok("gemini", `key works; model ${wanted} is available`);
-    const similar = models.map((m) => m.name.replace("models/", "")).filter((n) => /image/i.test(n)).slice(0, 6);
-    return warn("gemini", `key works, but model "${wanted}" was not found. Image models you can use: ${similar.join(", ") || "none listed"}. Set GEMINI_IMAGE_MODEL`);
+    const models = ((await res.json()) as { models?: Array<{ name: string }> }).models ?? [];
+    const wanted = env.GEMINI_IMAGE_MODEL ?? DEFAULT_GEMINI_IMAGE_MODEL;
+    if (models.some((m) => m.name === `models/${wanted}`)) return ok("gemini", `key works; model ${wanted} is listed`);
+    // The Interactions API may serve models the classic list does not show, so this is a hint, not a failure.
+    const similar = models.map((m) => m.name.replace("models/", "")).filter((n) => /image|banana/i.test(n)).slice(0, 6);
+    return warn("gemini", `key works, but "${wanted}" is not in the model list${similar.length ? ` (image models listed: ${similar.join(", ")})` : ""}. If generation fails with a model error, set GEMINI_IMAGE_MODEL`);
   });
 
   await run("higgsfield", async () => (env.HIGGSFIELD_API_KEY ? skip("higgsfield", "key is set; there is no free check, so the first video run is the test") : skip("higgsfield", "HIGGSFIELD_API_KEY not set (needed for video)")));

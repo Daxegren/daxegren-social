@@ -48,15 +48,16 @@ describe("doctor", () => {
     expect(await run(() => new Response("{}", { status: 404 }))).toMatchObject({ status: "fail", detail: expect.stringContaining("not found") });
   });
 
-  it("gemini: confirms the model, or lists the image models that exist", async () => {
+  it("gemini: confirms the key and model, hints when the model is not listed, rejects a bad key", async () => {
     const { sql } = await freshDb();
     await bareMigrated(sql);
     const run = (models: unknown, status = 200, env: Record<string, string> = {}) =>
       runDoctor({ env: { GEMINI_API_KEY: "AIza-key-123456", ...env }, sql, fetch: mockFetch([{ match: (u) => u.includes("generativelanguage"), reply: () => json(models, { status }) }]).fn }).then((c) => byName(c, "gemini"));
 
-    expect((await run({ models: [{ name: "models/gemini-2.5-flash-image", supportedGenerationMethods: ["generateContent"] }] })).status).toBe("ok");
-    const missing = await run({ models: [{ name: "models/gemini-3-pro-image-preview" }, { name: "models/gemini-2.5-pro" }] });
-    expect(missing).toMatchObject({ status: "warn", detail: expect.stringContaining("gemini-3-pro-image-preview") });
+    expect((await run({ models: [{ name: "models/gemini-nano-banana-2.1" }] })).status).toBe("ok");
+    const missing = await run({ models: [{ name: "models/gemini-3-pro-image" }, { name: "models/gemini-2.5-pro" }] });
+    expect(missing).toMatchObject({ status: "warn", detail: expect.stringContaining("gemini-3-pro-image") });
+    expect(missing.detail).toContain("gemini-nano-banana-2.1"); // names the model it looked for
     expect((await run({ models: [{ name: "models/custom-image" }] }, 200, { GEMINI_IMAGE_MODEL: "custom-image" })).status).toBe("ok");
     expect(await run({}, 403)).toMatchObject({ status: "fail", detail: expect.stringContaining("AI Studio") });
   });

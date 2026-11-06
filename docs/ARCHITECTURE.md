@@ -71,7 +71,7 @@ One repository, `@daxegren/social-engine`, standalone:
 |---|---|---|---|
 | Instagram | image, reel, carousel (2–10 images/videos) | yes (likes, comments) | likes, comments |
 | Facebook (Page) | text, photo(s), video | yes (reactions, comments, shares) | reactions, comments, shares |
-| LinkedIn | text, one image | via `importPosts` | no |
+| LinkedIn | text, one image (flow checked against LinkedIn's docs 2026-11-06) | via `importPosts` | no |
 | TikTok, Pinterest, YouTube, X, Snapchat | not yet — implement `ChannelAdapter` | | |
 
 Video generation is ported from the `content.generate.media` capability in Ecomduct CoPilot (Higgsfield) and checked

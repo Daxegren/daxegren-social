@@ -121,6 +121,16 @@ describe("LinkedInAdapter", () => {
     expect((calls[0]!.init!.headers as Record<string, string>)["Linkedin-Version"]).toMatch(/^\d{6}$/);
   });
 
+  it("sends a current API version by default (old ones are sunset), and lets you override it", async () => {
+    const send = async (apiVersion?: string) => {
+      const { fn, calls } = mockFetch([{ match: () => true, reply: () => new Response(null, { status: 201, headers: { "x-restli-id": "urn:li:share:1" } }) }]);
+      await new LinkedInAdapter({ authorUrn: "urn:li:person:me", accessToken: "tok", fetch: fn, apiVersion }).publish(variant("linkedin"), []);
+      return (calls[0]!.init!.headers as Record<string, string>)["Linkedin-Version"];
+    };
+    expect(await send()).toBe("202610");
+    expect(await send("202701")).toBe("202701");
+  });
+
   it("uploads an image before posting and references it", async () => {
     const { fn, calls } = mockFetch([
       {

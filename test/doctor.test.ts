@@ -112,6 +112,28 @@ describe("doctor", () => {
     expect(c.status).toBe("fail");
   });
 
+  describe("linkedin API version", () => {
+    const check = async (extra: Record<string, string>) => {
+      const { sql } = await freshDb();
+      const env = { LINKEDIN_AUTHOR_URN: "urn:li:person:abc123", LINKEDIN_ACCESS_TOKEN: "tok-123456", ...extra };
+      return byName(await runDoctor({ env, sql, fetch: mockFetch([]).fn, now: () => new Date("2026-11-06T08:00:00Z") }), "linkedin version");
+    };
+
+    it("is fine for the built-in default while it is recent, and says where the value comes from", async () => {
+      expect(await check({})).toMatchObject({ status: "ok", detail: expect.stringContaining("202610 (the built-in default)") });
+      expect(await check({ LINKEDIN_API_VERSION: "202601" })).toMatchObject({ status: "warn", detail: expect.stringContaining("10 months old") });
+    });
+
+    it("warns when a version nears its end of support and fails once it has most likely been sunset", async () => {
+      expect(await check({ LINKEDIN_API_VERSION: "202511" })).toMatchObject({ status: "warn" }); // sunsets 2026-11-16
+      expect(await check({ LINKEDIN_API_VERSION: "202506" })).toMatchObject({ status: "fail", detail: expect.stringContaining("sunset") });
+    });
+
+    it("rejects a value that is not YYYYMM", async () => {
+      for (const bad of ["2026", "2026-10", "202613", "latest"]) expect(await check({ LINKEDIN_API_VERSION: bad })).toMatchObject({ status: "fail" });
+    });
+  });
+
   it("scrubSecrets removes secret values and their `id:secret` halves, nothing else", () => {
     const env = { HIGGSFIELD_API_KEY: "keyid1234:secretsecret99", NAME: "keyid1234" };
     expect(scrubSecrets("bad keyid1234:secretsecret99 / secretsecret99 / keyid1234", env)).toBe("bad [redacted] / [redacted] / [redacted]");

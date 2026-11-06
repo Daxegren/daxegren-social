@@ -30,7 +30,7 @@ export function buildEngine(env: Env, store: Store, opts: { fetch?: FetchLike; n
     adapters.facebook = new FacebookAdapter({ pageId: env.FACEBOOK_PAGE_ID, accessToken: env.FACEBOOK_PAGE_ACCESS_TOKEN, fetch: opts.fetch });
   }
   if (env.LINKEDIN_AUTHOR_URN && env.LINKEDIN_ACCESS_TOKEN) {
-    adapters.linkedin = new LinkedInAdapter({ authorUrn: env.LINKEDIN_AUTHOR_URN, accessToken: env.LINKEDIN_ACCESS_TOKEN, fetch: opts.fetch });
+    adapters.linkedin = new LinkedInAdapter({ authorUrn: env.LINKEDIN_AUTHOR_URN, accessToken: env.LINKEDIN_ACCESS_TOKEN, apiVersion: env.LINKEDIN_API_VERSION, fetch: opts.fetch });
   }
 
   const generator: ContentGenerator = env.ANTHROPIC_API_KEY

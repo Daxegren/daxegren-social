@@ -10,11 +10,17 @@ import {
   type RemotePost,
 } from "./types.js";
 
+/**
+ * LinkedIn supports each monthly API version for about a year, then rejects it (202511 sunsets 2026-11-16). This default is
+ * the version current when the adapter was last checked against the docs (2026-11-06); `doctor` warns when it gets old.
+ */
+export const DEFAULT_LINKEDIN_VERSION = "202610";
+
 export interface LinkedInConfig {
   /** e.g. `urn:li:person:abc123` or `urn:li:organization:456`. */
   authorUrn: string;
   accessToken: string;
-  /** `YYYYMM` API version header. */
+  /** `YYYYMM` value of the `Linkedin-Version` header. */
   apiVersion?: string;
   fetch?: FetchLike;
 }
@@ -36,7 +42,7 @@ export class LinkedInAdapter implements ChannelAdapter {
 
   constructor(private readonly cfg: LinkedInConfig) {
     this.fetchFn = cfg.fetch ?? fetch;
-    this.version = cfg.apiVersion ?? "202506";
+    this.version = cfg.apiVersion ?? DEFAULT_LINKEDIN_VERSION;
   }
 
   async publish(variant: PostVariant, assets: Asset[]): Promise<PublishResult> {

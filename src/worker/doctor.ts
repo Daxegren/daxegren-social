@@ -2,6 +2,7 @@ import type { FetchLike } from "../adapters/types.js";
 import { PostgresStore, type SqlClient } from "../postgres-store.js";
 import { DEFAULT_MONTHLY_CAP_USD, monthStartIso } from "../media.js";
 import { DEFAULT_GEMINI_IMAGE_MODEL } from "../adapters/gemini-image.js";
+import { DEFAULT_LINKEDIN_VERSION } from "../adapters/linkedin.js";
 import { buildEngine, type Env } from "./env.js";
 import { migrationFiles } from "./migrate.js";
 
@@ -153,9 +154,25 @@ export async function runDoctor(deps: DoctorDeps): Promise<Check[]> {
 
   await run("linkedin", async () => {
     if (!env.LINKEDIN_AUTHOR_URN || !env.LINKEDIN_ACCESS_TOKEN) return skip("linkedin", "LINKEDIN_AUTHOR_URN / LINKEDIN_ACCESS_TOKEN not set");
-    return /^urn:li:(person|organization):[A-Za-z0-9_-]+$/.test(env.LINKEDIN_AUTHOR_URN)
+    const urn = /^urn:li:(person|organization):[A-Za-z0-9_-]+$/.test(env.LINKEDIN_AUTHOR_URN)
       ? skip("linkedin", "author URN looks right; there is no free check for the token, so the first post is the test")
       : fail("linkedin", "LINKEDIN_AUTHOR_URN must look like urn:li:person:<id> or urn:li:organization:<id>");
+
+    // LinkedIn supports each monthly API version for about a year and then rejects it.
+    const version = env.LINKEDIN_API_VERSION ?? DEFAULT_LINKEDIN_VERSION;
+    const m = /^(\d{4})(0[1-9]|1[0-2])$/.exec(version);
+    if (!m) return [urn, fail("linkedin version", `LINKEDIN_API_VERSION must be YYYYMM, got "${version}"`)];
+    const today = now();
+    const age = today.getUTCFullYear() * 12 + today.getUTCMonth() + 1 - (Number(m[1]) * 12 + Number(m[2]));
+    const where = env.LINKEDIN_API_VERSION ? "LINKEDIN_API_VERSION" : "the built-in default";
+    return [
+      urn,
+      age >= 13
+        ? fail("linkedin version", `${version} (${where}) is ${age} months old and has most likely been sunset. Set LINKEDIN_API_VERSION to a recent YYYYMM`)
+        : age >= 10
+          ? warn("linkedin version", `${version} (${where}) is ${age} months old; LinkedIn supports a version for about a year. Set LINKEDIN_API_VERSION to a newer YYYYMM`)
+          : ok("linkedin version", `${version} (${where}), ${Math.max(age, 0)} month(s) old`),
+    ];
   });
 
   return checks;

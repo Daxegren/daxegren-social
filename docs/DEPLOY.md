@@ -55,7 +55,7 @@ Repository → Settings → Secrets and variables → Actions:
 | `DATABASE_URL` | everything (pooler connection string) |
 | `ANTHROPIC_API_KEY` | generating drafts |
 | `FACEBOOK_PAGE_ID`, `FACEBOOK_PAGE_ACCESS_TOKEN` | publishing to / learning from a Facebook Page. A **Page** access token with `pages_manage_posts` and `pages_read_engagement`; the same Meta app review as Instagram applies |
-| `LINKEDIN_AUTHOR_URN`, `LINKEDIN_ACCESS_TOKEN` | publishing to LinkedIn |
+| `LINKEDIN_AUTHOR_URN`, `LINKEDIN_ACCESS_TOKEN` | publishing to LinkedIn. Optional variable `LINKEDIN_API_VERSION` (`YYYYMM`): LinkedIn supports each monthly version for about a year, then rejects it. The built-in default is `202610`; **Check setup** warns when the version in use is getting old |
 | `INSTAGRAM_USER_ID`, `INSTAGRAM_ACCESS_TOKEN` | publishing to / learning from Instagram |
 | `HIGGSFIELD_API_KEY` (`KEY_ID:KEY_SECRET`) | generating video |
 | `GEMINI_API_KEY` | generating images. A key from **Google AI Studio** on a **billed** project — Google's pricing page lists image generation as not available on the free tier, and a consumer Gemini subscription is not an API key |

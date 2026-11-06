@@ -5,6 +5,7 @@ export * from "./postgres-store.js";
 export * from "./analyze.js";
 export * from "./generate.js";
 export * from "./media.js";
+export * from "./notify.js";
 export * from "./scheduler.js";
 export * from "./engine.js";
 export * from "./adapters/types.js";

@@ -60,7 +60,15 @@ Repository → Settings → Secrets and variables → Actions:
 | `GEMINI_API_KEY` | generating images. A key from **Google AI Studio**, with its own billing — a consumer Gemini subscription is not an API key |
 | `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | storing generated video. **Service-role key: Actions secret only, never in the browser** |
 
-Optional variables `GEMINI_IMAGE_MODEL` (default `gemini-2.5-flash-image`) and `GEMINI_IMAGE_COST_USD` (default 0.04) — check Google's current model list and prices. Optional variable `MEDIA_MONTHLY_CAP_USD` (default 50) is the hard monthly limit on video spend.
+Optional variables `GEMINI_IMAGE_MODEL` (default `gemini-2.5-flash-image`) and `GEMINI_IMAGE_COST_USD` (default 0.04) — check Google's current model list and prices. Optional **notifications** to your phone: set the secret `NOTIFY_URL` and the variable `APP_URL` (the review app's address,
+so a tap opens it). The simplest way is [ntfy](https://ntfy.sh): install the ntfy app, subscribe to a long random
+topic name, and use `https://ntfy.sh/<that-topic>` as `NOTIFY_URL` — the topic name is the only protection, so treat
+the address as a secret. Slack and Discord webhook addresses work too (`NOTIFY_FORMAT` overrides the detection).
+Run **Send test notification** to see one arrive. You are told about: published posts, failed posts, new drafts,
+failed requests, finished media, and when media spending passes 80 % of the cap. Several events in one run are
+one message, and a failing notification never stops the work.
+
+Optional variable `MEDIA_MONTHLY_CAP_USD` (default 50) is the hard monthly limit on video spend.
 
 Then add the **variable** `SOCIAL_ENABLED` = `true`. Until it is set, none of the worker workflows do anything.
 A channel is enabled when its secrets are present. Optional secret `AUTO_APPROVE_CHANNELS` (e.g. `linkedin`)

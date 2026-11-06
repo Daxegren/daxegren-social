@@ -12,6 +12,7 @@ import { migrate } from "./migrate.js";
 export const USAGE = `usage: social <command>
 
   doctor                                    check the setup (free, read-only, never prints secrets)
+  notify-test                               send a test notification to NOTIFY_URL
   migrate                                   apply database migrations
   tick                                      publish everything that is due
   ingest <channel>                          read published posts from a channel
@@ -66,9 +67,14 @@ export async function runCli(argv: string[], deps: CliDeps): Promise<string> {
   }
   if (command === "migrate") return `applied: ${JSON.stringify(await migrate(deps.sql))}`;
 
-  const { engine, configuredChannels } = buildEngine(deps.env, new PostgresStore(deps.sql), { fetch: deps.fetch, now: deps.now });
+  const { engine, configuredChannels, notifier } = buildEngine(deps.env, new PostgresStore(deps.sql), { fetch: deps.fetch, now: deps.now });
 
   switch (command) {
+    case "notify-test": {
+      if (!notifier) throw new Error("NOTIFY_URL is not set");
+      await notifier.notify({ kind: "test", title: "Testnotis", message: "Det här är ett test från din innehållsmotor.", url: deps.env.APP_URL });
+      return `test notification sent (${(notifier as { format?: string }).format ?? "webhook"})`;
+    }
     case "tick":
       return JSON.stringify(await engine.tick());
     case "ingest": {

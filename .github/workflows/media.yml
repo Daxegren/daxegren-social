@@ -40,3 +40,5 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           MEDIA_MONTHLY_CAP_USD: ${{ vars.MEDIA_MONTHLY_CAP_USD }}
+          NOTIFY_URL: ${{ secrets.NOTIFY_URL }}
+          APP_URL: ${{ vars.APP_URL }}

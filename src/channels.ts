@@ -56,3 +56,14 @@ export function validateVariant(
   }
   return problems;
 }
+
+export const CHANNEL_LABELS: Record<Channel, string> = {
+  instagram: "Instagram",
+  tiktok: "TikTok",
+  facebook: "Facebook",
+  linkedin: "LinkedIn",
+  pinterest: "Pinterest",
+  youtube: "YouTube",
+  snapchat: "Snapchat",
+  x: "X",
+};

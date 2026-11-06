@@ -1,0 +1,20 @@
+name: Send test notification
+# Sends one message to NOTIFY_URL so you can see that notifications reach your phone.
+on:
+  workflow_dispatch:
+jobs:
+  notify:
+    if: ${{ vars.SOCIAL_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npm run build
+      - run: node dist/worker/main.js notify-test
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NOTIFY_URL: ${{ secrets.NOTIFY_URL }}
+          APP_URL: ${{ vars.APP_URL }}

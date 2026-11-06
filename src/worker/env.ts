@@ -7,6 +7,7 @@ import type { ChannelAdapter, FetchLike } from "../adapters/types.js";
 import { CHANNELS, type Channel } from "../domain.js";
 import { ContentEngine } from "../engine.js";
 import { ClaudeContentGenerator, type ContentGenerator } from "../generate.js";
+import { WebhookNotifier, type Notifier, type WebhookFormat } from "../notify.js";
 import type { Store } from "../store.js";
 
 export type Env = Record<string, string | undefined>;
@@ -14,6 +15,7 @@ export type Env = Record<string, string | undefined>;
 export interface Wiring {
   engine: ContentEngine;
   configuredChannels: Channel[];
+  notifier?: Notifier;
 }
 
 /** Builds the engine from environment variables. A channel is enabled when its credentials are present. */
@@ -47,7 +49,14 @@ export function buildEngine(env: Env, store: Store, opts: { fetch?: FetchLike; n
   const cap = env.MEDIA_MONTHLY_CAP_USD ? Number(env.MEDIA_MONTHLY_CAP_USD) : undefined;
   if (cap !== undefined && !(cap >= 0)) throw new Error(`MEDIA_MONTHLY_CAP_USD must be a number, got "${env.MEDIA_MONTHLY_CAP_USD}"`);
 
+  const formats: WebhookFormat[] = ["ntfy", "slack", "discord", "json"];
+  if (env.NOTIFY_FORMAT && !formats.includes(env.NOTIFY_FORMAT as WebhookFormat)) {
+    throw new Error(`NOTIFY_FORMAT must be one of ${formats.join(", ")}, got "${env.NOTIFY_FORMAT}"`);
+  }
+  const notifier = env.NOTIFY_URL ? new WebhookNotifier({ url: env.NOTIFY_URL, format: env.NOTIFY_FORMAT as WebhookFormat | undefined, fetch: opts.fetch }) : undefined;
+
   return {
+    notifier,
     engine: new ContentEngine({
       store,
       adapters,
@@ -55,6 +64,8 @@ export function buildEngine(env: Env, store: Store, opts: { fetch?: FetchLike; n
       autoApprove,
       now: opts.now,
       fetch: opts.fetch,
+      notifier,
+      appUrl: env.APP_URL,
       mediaMonthlyCapUsd: cap,
       imageGenerator: env.GEMINI_API_KEY
         ? new GeminiImageGenerator({

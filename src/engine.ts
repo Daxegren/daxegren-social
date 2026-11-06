@@ -1,5 +1,5 @@
 import { analyzeChannel, suggestTime, type ChannelInsights } from "./analyze.js";
-import { validateVariant } from "./channels.js";
+import { CHANNEL_LABELS, validateVariant } from "./channels.js";
 import type { Asset, AssetKind, Channel, ContentBrief, MediaJob, PostVariant, PublishedPost } from "./domain.js";
 import { NotSupportedError, type ChannelAdapter, type FetchLike, type RemotePost } from "./adapters/types.js";
 import type { ContentGenerator } from "./generate.js";
@@ -18,6 +18,7 @@ import {
   type MediaStorage,
   type VideoGenerator,
 } from "./media.js";
+import { excerpt, type Notifier, type NotifyEvent } from "./notify.js";
 import { runDue, type SchedulerOptions, type TickResult } from "./scheduler.js";
 import type { Store } from "./store.js";
 
@@ -33,6 +34,10 @@ export interface EngineConfig {
   /** Monthly spend limit for media generation, in USD. Default 50. */
   mediaMonthlyCapUsd?: number;
   fetch?: FetchLike;
+  /** Tells the owner what happened (published, failed, drafts ready, …). Optional; a failing notifier never stops work. */
+  notifier?: Notifier;
+  /** Address of the review app; a tapped notification opens it. */
+  appUrl?: string;
   /**
    * Channels whose generated variants skip the review queue and are scheduled
    * right away. Default: none — every variant waits for human approval.
@@ -69,12 +74,19 @@ export class ContentEngine {
   // ── Media generation (paid, asynchronous) ─────────────────────────────
 
   private async guardCap(estimateUsd: number) {
-    const guard = checkMonthlyCap({
-      spentUsd: await this.store.mediaSpendUsd(monthStartIso(this.now())),
-      capUsd: this.cfg.mediaMonthlyCapUsd ?? DEFAULT_MONTHLY_CAP_USD,
-      estimateUsd,
-    });
+    const spentUsd = await this.store.mediaSpendUsd(monthStartIso(this.now()));
+    const capUsd = this.cfg.mediaMonthlyCapUsd ?? DEFAULT_MONTHLY_CAP_USD;
+    const guard = checkMonthlyCap({ spentUsd, capUsd, estimateUsd });
     if (!guard.allowed) throw new MediaCapReachedError(guard.message!);
+    // Warn once, at the moment spending crosses 80 % of the cap — so it needs no stored state to avoid repeating.
+    const warnAt = capUsd * 0.8 - 1e-9; // tolerance: 19 × 0.04 is not exactly 0.76 in floating point
+    if (capUsd > 0 && spentUsd < warnAt && spentUsd + estimateUsd >= warnAt) {
+      await this.tell({
+        kind: "budget",
+        title: "Mediataket närmar sig",
+        message: `${(spentUsd + estimateUsd).toFixed(2)} av ${capUsd.toFixed(2)} USD använt denna månad (80 % eller mer).`,
+      });
+    }
   }
 
   /**
@@ -443,12 +455,76 @@ export class ContentEngine {
 
   /** Call on an interval: publishes what is due, drafts what was requested, and collects finished media. */
   async tick(): Promise<
-    TickResult & { requests: Awaited<ReturnType<ContentEngine["processBriefRequests"]>>; media?: Awaited<ReturnType<ContentEngine["advanceMedia"]>> }
+    TickResult & {
+      requests: Awaited<ReturnType<ContentEngine["processBriefRequests"]>>;
+      media?: Awaited<ReturnType<ContentEngine["advanceMedia"]>>;
+      notifyErrors?: string[];
+    }
   > {
+    this.notifyErrors = [];
     const published = await runDue(this.store, this.adapters, this.now(), this.cfg.scheduler);
     const requests = await this.processBriefRequests();
     const media = (this.cfg.videoGenerator || this.cfg.imageGenerator) && this.cfg.mediaStorage ? await this.advanceMedia() : undefined;
-    return media ? { ...published, requests, media } : { ...published, requests };
+
+    await this.announce(published, requests, media);
+
+    const result = media ? { ...published, requests, media } : { ...published, requests };
+    return this.notifyErrors.length ? { ...result, notifyErrors: this.notifyErrors } : result;
+  }
+
+  // ── notifications ─────────────────────────────────────────────────────
+
+  private notifyErrors: string[] = [];
+
+  /** Sends one notification; a failure is recorded, never thrown. */
+  private async tell(event: NotifyEvent): Promise<void> {
+    if (!this.cfg.notifier) return;
+    try {
+      await this.cfg.notifier.notify({ ...event, url: event.url ?? this.cfg.appUrl });
+    } catch (err) {
+      this.notifyErrors.push((err as Error).message);
+    }
+  }
+
+  /** One message per kind of event, so ten posts in one run are one buzz, not ten. */
+  private async announce(
+    published: TickResult,
+    requests: { processed: string[]; failed: string[] },
+    media?: { completed: string[]; failed: string[] },
+  ): Promise<void> {
+    if (!this.cfg.notifier) return;
+    const label = (c: Channel) => CHANNEL_LABELS[c] ?? c;
+
+    if (published.published.length) {
+      const vs = (await Promise.all(published.published.map((id) => this.store.getVariant(id)))).filter((v): v is PostVariant => !!v);
+      await this.tell({
+        kind: "published",
+        title: vs.length === 1 ? `Publicerat på ${label(vs[0]!.channel)}` : `${vs.length} inlägg publicerade`,
+        message: vs.map((v) => `${label(v.channel)}: ${excerpt(v.text)}`).join("\n"),
+        url: vs.length === 1 ? vs[0]!.url : undefined,
+      });
+    }
+
+    for (const id of published.failed) {
+      const v = await this.store.getVariant(id);
+      if (!v) continue;
+      await this.tell({ kind: "failed", title: `Misslyckades på ${label(v.channel)}`, message: `${excerpt(v.text, 60)}\n${excerpt(v.lastError ?? "okänt fel", 200)}` });
+    }
+
+    const briefs = (await Promise.all(requests.processed.map((id) => this.store.getBrief(id)))).filter((b): b is ContentBrief => !!b);
+    let drafts = 0;
+    for (const b of briefs) drafts += (await this.store.listVariants({ briefId: b.id, status: "draft" })).length;
+    if (briefs.length && drafts) {
+      await this.tell({ kind: "drafts_ready", title: drafts === 1 ? "1 nytt utkast väntar" : `${drafts} nya utkast väntar`, message: briefs.map((b) => `Idé: ${excerpt(b.idea)}`).join("\n") });
+    }
+
+    for (const id of requests.failed) {
+      const b = await this.store.getBrief(id);
+      if (b) await this.tell({ kind: "request_failed", title: "Beställningen misslyckades", message: `${excerpt(b.idea, 60)}\n${excerpt(b.error ?? "okänt fel", 200)}` });
+    }
+
+    if (media?.completed.length) await this.tell({ kind: "media", title: media.completed.length === 1 ? "Media klar" : `${media.completed.length} media klara`, message: "Finns nu i materialet i Skapa." });
+    if (media?.failed.length) await this.tell({ kind: "media", title: "Media misslyckades", message: `${media.failed.length} jobb misslyckades. Se Check setup eller loggen.` });
   }
 
   // ── helpers ───────────────────────────────────────────────────────────

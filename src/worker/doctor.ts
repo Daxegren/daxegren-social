@@ -18,14 +18,15 @@ export interface DoctorDeps {
   now?: () => Date;
 }
 
-const SECRET_KEY = /KEY|TOKEN|SECRET|PASSWORD|DATABASE_URL/i;
+const SECRET_KEY = /KEY|TOKEN|SECRET|PASSWORD|DATABASE_URL|NOTIFY_URL/i;
 
 /** Removes every secret value in `env` from `text`, so no check can leak a credential into a log. */
 export function scrubSecrets(text: string, env: Env): string {
   let out = text;
   for (const [k, v] of Object.entries(env)) {
     if (!v || v.length < 7 || !SECRET_KEY.test(k)) continue;
-    for (const part of [v, ...v.split(":")]) if (part.length >= 7) out = out.split(part).join("[redacted]");
+    // `id:secret` credentials, and the topic at the end of a webhook address (which is its only protection).
+    for (const part of [v, ...v.split(":"), v.split("/").pop() ?? ""]) if (part.length >= 7) out = out.split(part).join("[redacted]");
   }
   return out;
 }
@@ -57,6 +58,13 @@ export async function runDoctor(deps: DoctorDeps): Promise<Check[]> {
     return configuredChannels.length === 0
       ? warn("channels", "no channel has credentials, so nothing can be published (set INSTAGRAM_* or LINKEDIN_*)")
       : ok("channels", `publishing enabled for ${configuredChannels.join(", ")}${auto ? `; auto-approve: ${auto}` : "; every draft needs your approval"}`);
+  });
+
+  await run("notifications", async () => {
+    if (!env.NOTIFY_URL) return skip("notifications", "NOTIFY_URL not set (optional: a push message to your phone when something happens)");
+    const { WebhookNotifier } = await import("../notify.js");
+    const n = new WebhookNotifier({ url: env.NOTIFY_URL, format: env.NOTIFY_FORMAT as never });
+    return ok("notifications", `configured (${n.format}); run notify-test to see one arrive${env.APP_URL ? "" : "; set APP_URL so a tap opens the app"}`);
   });
 
   await run("database", async () => {

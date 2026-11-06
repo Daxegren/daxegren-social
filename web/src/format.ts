@@ -17,13 +17,4 @@ export function formatWhen(iso: string | undefined): string {
   return new Date(iso).toLocaleString("sv-SE", { dateStyle: "medium", timeStyle: "short" });
 }
 
-export const CHANNEL_LABELS: Record<string, string> = {
-  instagram: "Instagram",
-  tiktok: "TikTok",
-  facebook: "Facebook",
-  linkedin: "LinkedIn",
-  pinterest: "Pinterest",
-  youtube: "YouTube",
-  snapchat: "Snapchat",
-  x: "X",
-};
+export { CHANNEL_LABELS } from "../../src/channels.js";

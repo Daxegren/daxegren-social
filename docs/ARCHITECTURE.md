@@ -69,7 +69,7 @@ One repository, `@daxegren/social-engine`, standalone:
 
 | Channel | Publish | Ingest | Metrics |
 |---|---|---|---|
-| Instagram | image, reel, carousel (2–10 images/videos) | yes (likes, comments) | likes, comments |
+| Instagram | JPEG image, reel, carousel (2–20 images/videos; JPEG only, checked at approval) | yes (likes, comments) | likes, comments |
 | Facebook (Page) | text, photo(s), video | yes (reactions, comments, shares) | reactions, comments, shares |
 | LinkedIn | text, one image (flow checked against LinkedIn's docs 2026-11-06) | via `importPosts` | no |
 | TikTok, Pinterest, YouTube, X, Snapchat | not yet — implement `ChannelAdapter` | | |
@@ -83,7 +83,7 @@ models through the Lovable AI Gateway, which only works inside Lovable. The Gemi
 the Interactions API (checked 2026-11-06) but has not yet been run against a live key.
 
 Not built yet: richer insights (reach/saves), video
-upload flows for the other channels. The Facebook adapter and the Instagram carousel were written from memory of the Graph API and have not been
-confirmed against a live account. Platform limits in
+upload flows for the other channels. The Instagram and Facebook flows (containers, carousels, photos, `attached_media`) were checked against Meta's
+documentation on 2026-11-06 but not against a live account. Platform limits in
 `channels.ts` and API versions in the adapters should be checked against current platform documentation before
 production use.

@@ -53,7 +53,7 @@ export class InstagramAdapter implements ChannelAdapter {
 
   async publish(variant: PostVariant, assets: Asset[]): Promise<PublishResult> {
     if (assets.length === 0) throw new AdapterError("instagram needs at least one image or video", true);
-    if (assets.length > 10) throw new AdapterError("an instagram carousel holds at most 10 items", true);
+    if (assets.length > 20) throw new AdapterError("an instagram carousel holds at most 20 items", true);
 
     const container = assets.length === 1 ? await this.singleContainer(variant, assets[0]!) : await this.carouselContainer(variant, assets);
 
@@ -85,7 +85,7 @@ export class InstagramAdapter implements ChannelAdapter {
     return container.id;
   }
 
-  /** 2–10 images/videos as one swipeable post: one container per item, then a parent that carries the caption. */
+  /** 2–20 images/videos as one swipeable post: one container per item, then a parent that carries the caption. */
   private async carouselContainer(variant: PostVariant, assets: Asset[]): Promise<string> {
     const children: string[] = [];
     for (const asset of assets) {

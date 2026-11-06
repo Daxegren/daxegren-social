@@ -68,4 +68,29 @@ describe("validateVariant", () => {
   it("accepts a valid variant", () => {
     expect(validateVariant({ channel: "linkedin", text: "fine", assetIds: [] }, [])).toEqual([]);
   });
+
+  describe("Instagram takes JPEG only", () => {
+    const withUri = (uri: string): Asset => ({ ...img, uri });
+    const problems = (uri: string, channel: "instagram" | "linkedin" = "instagram") =>
+      validateVariant({ channel, text: "t", assetIds: ["a1"] }, [withUri(uri)]).filter((p) => /JPEG/.test(p));
+
+    it("flags PNG, WebP, HEIC and GIF images on Instagram, naming the file type", () => {
+      for (const ext of ["png", "webp", "heic", "gif"]) expect(problems(`https://cdn.test/a.${ext}`)).toEqual([expect.stringContaining(`.${ext}`)]);
+      expect(problems("https://cdn.test/A.PNG")).toHaveLength(1); // case does not matter
+    });
+
+    it("accepts JPEG in either spelling, ignores query strings, and lets unknown extensions through", () => {
+      expect(problems("https://cdn.test/a.jpg")).toEqual([]);
+      expect(problems("https://cdn.test/a.JPEG")).toEqual([]);
+      expect(problems("https://cdn.test/a.jpg?token=x.png")).toEqual([]);
+      expect(problems("https://cdn.test/image")).toEqual([]);
+      expect(problems("https://cdn.test/photo.v2/image")).toEqual([]);
+    });
+
+    it("does not apply to videos, or to other channels", () => {
+      const video: Asset = { ...img, kind: "video", uri: "https://cdn.test/a.png" };
+      expect(validateVariant({ channel: "instagram", text: "t", assetIds: ["a1"] }, [video]).filter((p) => /JPEG/.test(p))).toEqual([]);
+      expect(problems("https://cdn.test/a.png", "linkedin")).toEqual([]);
+    });
+  });
 });

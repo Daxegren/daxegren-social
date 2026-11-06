@@ -198,11 +198,11 @@ describe("InstagramAdapter: carousels", () => {
     expect(calls.some((c) => c.url.endsWith("/media_publish"))).toBe(false);
   });
 
-  it("accepts up to ten items, and refuses none or eleven without calling Instagram", async () => {
+  it("accepts up to twenty items, and refuses none or twenty-one without calling Instagram", async () => {
     const { fn, calls } = mockFetch([]);
     const ig = new InstagramAdapter({ igUserId: "123", accessToken: "tok", fetch: fn });
-    const many = Array.from({ length: 11 }, (_, i) => asset("image", `https://cdn.test/${i}.jpg`));
-    await expect(ig.publish(variant("instagram"), many)).rejects.toThrow(/at most 10/);
+    const many = Array.from({ length: 21 }, (_, i) => asset("image", `https://cdn.test/${i}.jpg`));
+    await expect(ig.publish(variant("instagram"), many)).rejects.toThrow(/at most 20/);
     await expect(ig.publish(variant("instagram"), [])).rejects.toThrow(/at least one/);
     expect(calls).toHaveLength(0);
   });

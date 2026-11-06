@@ -117,6 +117,7 @@ export function CreateView({ api }: { api: CreateApi }) {
       <form onSubmit={submit} className="space-y-6">
         <fieldset>
           <legend className="text-sm font-medium text-slate-700">1. Material (valfritt)</legend>
+          <p className="mt-1 text-xs text-slate-500">Instagram tar bara JPEG-bilder. Välj JPEG om du ska posta där.</p>
           <label className="mt-2 flex cursor-pointer items-center justify-center rounded border-2 border-dashed border-slate-300 bg-white p-4 text-sm text-slate-600">
             {uploading > 0 ? `Laddar upp ${uploading} fil(er)…` : "Ta ett foto, spela in eller välj från galleriet"}
             <input

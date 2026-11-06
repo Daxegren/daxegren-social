@@ -58,6 +58,7 @@ function toBrief(r: Row): ContentBrief {
     channels: opt(r.channels),
     status: r.status,
     error: opt(r.error),
+    claimedAt: iso(r.claimed_at),
     createdAt: iso(r.created_at)!,
   };
 }
@@ -77,6 +78,7 @@ function toVariant(r: Row): PostVariant {
     externalId: opt(r.external_id),
     url: opt(r.url),
     publishedAt: iso(r.published_at),
+    claimedAt: iso(r.claimed_at),
     createdAt: iso(r.created_at)!,
   };
 }
@@ -177,7 +179,7 @@ export class PostgresStore implements Store {
   }
 
   async transitionBrief(id: string, from: BriefStatus, to: BriefStatus) {
-    const rows = await this.sql.query<Row>(`update social_briefs set status = $3 where id = $1 and status = $2 returning *`, [id, from, to]);
+    const rows = await this.sql.query<Row>(`update social_briefs set status = $3, claimed_at = now() where id = $1 and status = $2 returning *`, [id, from, to]);
     return rows[0] ? toBrief(rows[0]) : undefined;
   }
 
@@ -214,7 +216,7 @@ export class PostgresStore implements Store {
 
   async transitionVariant(id: string, from: VariantStatus, to: VariantStatus) {
     const rows = await this.sql.query<Row>(
-      `update social_variants set status = $3 where id = $1 and status = $2 returning *`,
+      `update social_variants set status = $3, claimed_at = now() where id = $1 and status = $2 returning *`,
       [id, from, to],
     );
     return rows[0] ? toVariant(rows[0]) : undefined;

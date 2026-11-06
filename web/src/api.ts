@@ -7,6 +7,8 @@ export interface SocialApi {
   getAssets(ids: string[]): Promise<Asset[]>;
   approve(id: string, input: { text: string; scheduledAt: Date }): Promise<void>;
   reject(id: string): Promise<void>;
+  /** Puts a failed post back in the queue (resets attempts and error). */
+  retry(id: string): Promise<void>;
 }
 
 type Row = Record<string, any>;
@@ -67,6 +69,12 @@ export function supabaseSocialApi(client: SupabaseClient): SocialApi {
       if (error) throw new Error(error.message);
       // RLS hides non-draft rows from UPDATE, so "nothing updated" means it was changed elsewhere (or no access).
       if (!data || data.length === 0) throw new Error("Utkastet finns inte längre som utkast. Ladda om listan.");
+    },
+
+    async retry(id) {
+      // A database function (not a table update): it also resets the attempt counter and error, which the app may not write.
+      const { error } = await client.rpc("social_retry_variant", { p_id: id });
+      if (error) throw new Error(error.code === "P0002" ? "Inlägget är inte längre markerat som misslyckat. Ladda om listan." : error.message);
     },
 
     async reject(id) {

@@ -99,10 +99,10 @@ posts are published by the next tick.
 - **Video spend is bounded, not exact.** The cap counts started jobs at their estimate until the provider reports
   the real cost. Two jobs started at the same moment can together pass the cap slightly. Higgsfield does not
   always report actual cost, so figures are estimates.
-- **A request can strand too.** If a run is killed while it is drafting a request, the request stays at
-  *Skapar utkast…*. Order it again.
-- **A cancelled run can strand a post.** If a run is killed mid-publish the variant stays `publishing`
-  (retrying automatically could post twice). Check the platform, then fix the row by hand.
+- **Abandoned work is found, not hidden.** If a run is killed while it is publishing, the post stays "publishing"; after
+  30 minutes the next run marks it **failed** with the note *Avbröts under publicering* and notifies you. It is never
+  published again by itself, because it may already have gone out. Check the platform; if the post is not there, press
+  **Försök igen** on the *Misslyckade* tab. An abandoned request is marked failed the same way (order it again).
 - **Public repo.** Code and docs are public. Secrets live only in Actions secrets and are not exposed to
   workflows triggered from forks. Never commit tokens or `.env` files.
 - **Platform access.** Instagram publishing needs a business/creator account and Meta app review; LinkedIn

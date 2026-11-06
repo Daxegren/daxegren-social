@@ -38,6 +38,8 @@ export interface EngineConfig {
   notifier?: Notifier;
   /** Address of the review app; a tapped notification opens it. */
   appUrl?: string;
+  /** How long a post may stay "publishing" (or a request "processing") before it is treated as abandoned. Default 30 minutes. */
+  strandedAfterMs?: number;
   /**
    * Channels whose generated variants skip the review queue and are scheduled
    * right away. Default: none — every variant waits for human approval.
@@ -458,18 +460,56 @@ export class ContentEngine {
     TickResult & {
       requests: Awaited<ReturnType<ContentEngine["processBriefRequests"]>>;
       media?: Awaited<ReturnType<ContentEngine["advanceMedia"]>>;
+      recovered?: Awaited<ReturnType<ContentEngine["recoverStranded"]>>;
       notifyErrors?: string[];
     }
   > {
     this.notifyErrors = [];
+    const recovered = await this.recoverStranded();
     const published = await runDue(this.store, this.adapters, this.now(), this.cfg.scheduler);
     const requests = await this.processBriefRequests();
     const media = (this.cfg.videoGenerator || this.cfg.imageGenerator) && this.cfg.mediaStorage ? await this.advanceMedia() : undefined;
 
-    await this.announce(published, requests, media);
+    await this.announce(published, requests, media, recovered);
 
-    const result = media ? { ...published, requests, media } : { ...published, requests };
+    const found = recovered.variants.length || recovered.briefs.length ? { recovered } : {};
+    const result = media ? { ...published, requests, media, ...found } : { ...published, requests, ...found };
     return this.notifyErrors.length ? { ...result, notifyErrors: this.notifyErrors } : result;
+  }
+
+  // ── recovery ──────────────────────────────────────────────────────────
+
+  /**
+   * Finds work claimed by a worker that never finished (killed run, crash). A post is NEVER published again
+   * automatically: it may have gone out before the worker died. It is marked failed with an explanation instead, so
+   * it shows up in the app and you decide after checking the platform. An abandoned request is marked failed too.
+   */
+  async recoverStranded(): Promise<{ variants: string[]; briefs: string[] }> {
+    const limit = this.cfg.strandedAfterMs ?? 30 * 60_000;
+    const cutoff = this.now().getTime() - limit;
+    const result = { variants: [] as string[], briefs: [] as string[] };
+
+    for (const v of await this.store.listVariants({ status: "publishing" })) {
+      if (new Date(v.claimedAt ?? v.createdAt).getTime() > cutoff) continue;
+      // Compare-and-swap: if the worker finished in the meantime, leave it alone.
+      const moved = await this.store.transitionVariant(v.id, "publishing", "failed");
+      if (!moved) continue;
+      await this.store.putVariant({
+        ...moved,
+        status: "failed",
+        lastError: "Avbröts under publicering. Kontrollera på plattformen om inlägget syns. Om det inte gör det: tryck Försök igen.",
+      });
+      result.variants.push(v.id);
+    }
+
+    for (const b of await this.store.listBriefs({ status: "processing" })) {
+      if (new Date(b.claimedAt ?? b.createdAt).getTime() > cutoff) continue;
+      const moved = await this.store.transitionBrief(b.id, "processing", "failed");
+      if (!moved) continue;
+      await this.store.putBrief({ ...moved, status: "failed", error: "Avbröts innan utkasten var klara. Beställ igen." });
+      result.briefs.push(b.id);
+    }
+    return result;
   }
 
   // ── notifications ─────────────────────────────────────────────────────
@@ -491,9 +531,22 @@ export class ContentEngine {
     published: TickResult,
     requests: { processed: string[]; failed: string[] },
     media?: { completed: string[]; failed: string[] },
+    recovered?: { variants: string[]; briefs: string[] },
   ): Promise<void> {
     if (!this.cfg.notifier) return;
     const label = (c: Channel) => CHANNEL_LABELS[c] ?? c;
+
+    if (recovered?.variants.length) {
+      const vs = (await Promise.all(recovered.variants.map((id) => this.store.getVariant(id)))).filter((v): v is PostVariant => !!v);
+      await this.tell({
+        kind: "stranded",
+        title: vs.length === 1 ? "Ett inlägg fastnade" : `${vs.length} inlägg fastnade`,
+        message: `${vs.map((v) => `${label(v.channel)}: ${excerpt(v.text, 50)}`).join("\n")}\nKolla på plattformen om det syns innan du försöker igen.`,
+      });
+    }
+    if (recovered?.briefs.length) {
+      await this.tell({ kind: "stranded", title: "En beställning avbröts", message: "Beställ igen i appen." });
+    }
 
     if (published.published.length) {
       const vs = (await Promise.all(published.published.map((id) => this.store.getVariant(id)))).filter((v): v is PostVariant => !!v);

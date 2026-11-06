@@ -59,4 +59,14 @@ describe("supabaseSocialApi", () => {
     expect(await supabaseSocialApi(client).getAssets([])).toEqual([]);
     expect(calls).toHaveLength(0);
   });
+
+  it("retry calls the database function, and explains when the post is no longer failed", async () => {
+    const calls: Array<[string, unknown]> = [];
+    const client = (error: { code?: string; message: string } | null) =>
+      ({ rpc: async (fn: string, args: unknown) => (calls.push([fn, args]), { data: null, error }) }) as unknown as SupabaseClient;
+    await supabaseSocialApi(client(null)).retry("v1");
+    expect(calls).toEqual([["social_retry_variant", { p_id: "v1" }]]);
+    await expect(supabaseSocialApi(client({ code: "P0002", message: "variant v1 is not a failed variant" })).retry("v1")).rejects.toThrow(/Ladda om/);
+    await expect(supabaseSocialApi(client({ code: "42501", message: "not allowed" })).retry("v1")).rejects.toThrow("not allowed");
+  });
 });

@@ -70,6 +70,8 @@ export interface ContentBrief {
   status?: BriefStatus;
   /** Why a request failed. */
   error?: string;
+  /** When a worker started processing it. */
+  claimedAt?: string;
   createdAt: string;
 }
 
@@ -96,6 +98,8 @@ export interface PostVariant {
   externalId?: string;
   url?: string;
   publishedAt?: string;
+  /** When a worker started publishing it. */
+  claimedAt?: string;
   createdAt: string;
 }
 

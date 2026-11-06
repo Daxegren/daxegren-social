@@ -25,6 +25,7 @@ function fakeApi(byStatus: Partial<Record<PostVariant["status"], PostVariant[]>>
     getAssets: vi.fn(async (ids) => assets.filter((a) => ids.includes(a.id))),
     approve: vi.fn(async () => {}),
     reject: vi.fn(async () => {}),
+    retry: vi.fn(async () => {}),
   };
 }
 
@@ -112,5 +113,35 @@ describe("ReviewQueue", () => {
     await userEvent.click(await screen.findByRole("tab", { name: "Misslyckade" }));
     expect(await screen.findByText("HTTP 400 från linkedin")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Avvisa" })).not.toBeInTheDocument();
+  });
+});
+
+describe("ReviewQueue: failed posts", () => {
+  it("retries a failed post from the Misslyckade tab and removes it from the list", async () => {
+    const v = variant({ status: "failed", lastError: "Avbröts under publicering. Kontrollera på plattformen" });
+    const api = fakeApi({ failed: [v] });
+    render(<ReviewQueue api={api} />);
+    await userEvent.click(await screen.findByRole("tab", { name: "Misslyckade" }));
+    expect(await screen.findByText(/Avbröts under publicering/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Försök igen" }));
+    await waitFor(() => expect(api.retry).toHaveBeenCalledWith(v.id));
+    await waitFor(() => expect(screen.queryByText(/Avbröts under publicering/)).not.toBeInTheDocument());
+  });
+
+  it("keeps the post and shows the reason when the retry is refused", async () => {
+    const api = fakeApi({ failed: [variant({ status: "failed", lastError: "fel" })] });
+    vi.mocked(api.retry).mockRejectedValueOnce(new Error("not allowed"));
+    render(<ReviewQueue api={api} />);
+    await userEvent.click(await screen.findByRole("tab", { name: "Misslyckade" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Försök igen" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("not allowed");
+    expect(screen.getByRole("button", { name: "Försök igen" })).toBeInTheDocument();
+  });
+
+  it("offers no retry on the other tabs", async () => {
+    render(<ReviewQueue api={fakeApi({ scheduled: [variant({ status: "scheduled" })] })} />);
+    await userEvent.click(await screen.findByRole("tab", { name: "Schemalagda" }));
+    await screen.findByText("Ett utkast");
+    expect(screen.queryByRole("button", { name: "Försök igen" })).not.toBeInTheDocument();
   });
 });

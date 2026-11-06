@@ -47,8 +47,9 @@ One repository, `@daxegren/social-engine`, standalone:
 - **Human approval by default.** Generated variants are `draft` until approved. `autoApprove` opts a channel
   out of review, and only for variants that pass channel validation.
 - **No double posts.** A variant is claimed with an atomic `scheduled → publishing` transition before the
-  network call. If a worker dies mid-publish the variant stays `publishing` and needs a manual look,
-  because retrying automatically could duplicate a post that actually went out.
+  network call. If a worker dies mid-publish the variant stays `publishing`; after 30 minutes `tick` marks it
+  `failed` with an explanation and notifies you, and you press *Försök igen* after checking the platform — it is
+  never retried automatically, because that could duplicate a post that actually went out.
 - **The browser can only do narrow things.** A reviewer can edit and approve drafts, upload into their own
   `uploads/<user id>/` folder, register such an upload as a *captured* asset, and create a brief as a *request*.
   Everything else (drafting, publishing, generating media, results) happens in the worker with the service role.
@@ -78,6 +79,6 @@ models through the Lovable AI Gateway, which only works inside Lovable. The Gemi
 against a live key.
 
 Not built yet: Instagram carousels and richer insights (reach/saves), video
-upload flows for the other channels, recovery of variants stranded in `publishing`. Platform limits in
+upload flows for the other channels. Platform limits in
 `channels.ts` and API versions in the adapters should be checked against current platform documentation before
 production use.

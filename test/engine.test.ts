@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { ContentEngine } from "../src/engine.js";
 import { MemoryStore } from "../src/store.js";
+import type { PostVariant } from "../src/domain.js";
 import { FakeAdapter, FakeGenerator, permanent, transient } from "./helpers.js";
 
 const T0 = new Date("2026-11-02T08:00:00Z");
@@ -279,5 +280,96 @@ describe("requests from the review app", () => {
     await ctx.store.putBrief({ id: crypto.randomUUID(), idea: "x", sourcePostIds: [], assetIds: [photo.id], channels: ["linkedin"], status: "requested", createdAt: T0.toISOString() });
     await engine.tick();
     expect(seen).toEqual([[photo.id]]);
+  });
+});
+
+describe("recovery of abandoned work", () => {
+  const MIN = 60_000;
+  /** A store whose clock is behind the engine's, so a claim made "earlier" looks old. */
+  function stale(agoMinutes: number) {
+    const store = new MemoryStore({ now: () => new Date(T0.getTime() - agoMinutes * MIN) });
+    const linkedin = new FakeAdapter("linkedin");
+    const engine = new ContentEngine({ store, adapters: { linkedin }, generator: new FakeGenerator(), now: () => T0 });
+    return { store, linkedin, engine };
+  }
+  const publishing = async (store: MemoryStore) => {
+    const brief = { id: crypto.randomUUID(), idea: "x", sourcePostIds: [], assetIds: [], createdAt: T0.toISOString() };
+    await store.putBrief(brief);
+    const v: PostVariant = { id: crypto.randomUUID(), briefId: brief.id, channel: "linkedin", text: "Ett viktigt inlägg", assetIds: [], status: "scheduled", scheduledAt: T0.toISOString(), attempts: 1, createdAt: T0.toISOString() };
+    await store.putVariant(v);
+    await store.transitionVariant(v.id, "scheduled", "publishing"); // the worker dies here
+    return v;
+  };
+
+  it("marks an abandoned post failed with an explanation, and never publishes it again by itself", async () => {
+    const { store, linkedin, engine } = stale(45);
+    const v = await publishing(store);
+    const res = await engine.tick();
+
+    expect(res.recovered).toEqual({ variants: [v.id], briefs: [] });
+    expect(await store.getVariant(v.id)).toMatchObject({ status: "failed", lastError: expect.stringContaining("Kontrollera på plattformen") });
+    expect(linkedin.published).toHaveLength(0);
+    expect((await engine.tick()).recovered).toBeUndefined(); // handled once
+  });
+
+  it("leaves a post that was claimed recently", async () => {
+    const { store, engine } = stale(5);
+    const v = await publishing(store);
+    expect((await engine.tick()).recovered).toBeUndefined();
+    expect((await store.getVariant(v.id))!.status).toBe("publishing");
+  });
+
+  it("the limit is configurable", async () => {
+    const store = new MemoryStore({ now: () => new Date(T0.getTime() - 5 * MIN) });
+    const engine = new ContentEngine({ store, adapters: {}, generator: new FakeGenerator(), now: () => T0, strandedAfterMs: 2 * MIN });
+    const v = await publishing(store);
+    expect((await engine.tick()).recovered?.variants).toEqual([v.id]);
+  });
+
+  it("does not overwrite a post that finished while recovery was looking", async () => {
+    const { store } = stale(60);
+    const v = await publishing(store);
+    const snapshot = await store.listVariants({ status: "publishing" });
+    await store.transitionVariant(v.id, "publishing", "published"); // the slow worker finished after all
+    const racing = Object.create(store, { listVariants: { value: async () => snapshot } });
+    const e2 = new ContentEngine({ store: racing, adapters: {}, generator: new FakeGenerator(), now: () => T0 });
+    expect(await e2.recoverStranded()).toEqual({ variants: [], briefs: [] });
+    expect((await store.getVariant(v.id))!.status).toBe("published");
+  });
+
+  it("an abandoned request is marked failed so the app shows it, and a fresh one is left alone", async () => {
+    const { store, engine } = stale(45);
+    const old = { id: crypto.randomUUID(), idea: "gammal", sourcePostIds: [], assetIds: [], channels: ["linkedin" as const], status: "requested" as const, createdAt: T0.toISOString() };
+    await store.putBrief(old);
+    await store.transitionBrief(old.id, "requested", "processing");
+    const res = await engine.tick();
+    expect(res.recovered).toEqual({ variants: [], briefs: [old.id] });
+    expect(await store.getBrief(old.id)).toMatchObject({ status: "failed", error: expect.stringContaining("Beställ igen") });
+
+    const fresh = stale(5);
+    const b = { ...old, id: crypto.randomUUID() };
+    await fresh.store.putBrief(b);
+    await fresh.store.transitionBrief(b.id, "requested", "processing");
+    expect((await fresh.engine.tick()).recovered).toBeUndefined();
+  });
+
+  it("tells you once, in plain words", async () => {
+    const events: Array<{ kind: string; title: string; message: string }> = [];
+    const { store } = stale(45);
+    const engine = new ContentEngine({ store, adapters: {}, generator: new FakeGenerator(), now: () => T0, notifier: { notify: async (e) => void events.push(e) } });
+    await publishing(store);
+    await engine.tick();
+    await engine.tick();
+    expect(events).toEqual([expect.objectContaining({ kind: "stranded", title: "Ett inlägg fastnade" })]);
+    expect(events[0]!.message).toContain("Kolla på plattformen");
+  });
+
+  it("a retried post is published again from the start", async () => {
+    const { store, linkedin, engine } = stale(45);
+    const v = await publishing(store);
+    await engine.tick(); // → failed
+    await engine.retry(v.id, T0);
+    expect((await engine.tick()).published).toEqual([v.id]);
+    expect(linkedin.published).toHaveLength(1);
   });
 });

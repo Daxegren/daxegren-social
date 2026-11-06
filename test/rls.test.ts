@@ -163,3 +163,33 @@ describe("requests and uploads from the app (RLS)", () => {
     expect(rows).toEqual([{ id: "social-media", public: true, limit: 52428800, allowed_mime_types: ["image/*", "video/*"] }]);
   });
 });
+
+describe("retrying a failed post from the app (RLS)", () => {
+  const failedId = () => db.query<{ id: string }>(`select id from social_variants where status = 'failed' limit 1`).then((r) => r.rows[0]?.id);
+
+  beforeEach(async () => {
+    await db.exec(`update social_variants set status = 'failed', attempts = 5, last_error = 'boom', claimed_at = now() where id = '${scheduledId}'`);
+  });
+
+  it("a reviewer puts a failed post back in the queue with attempts and error reset", async () => {
+    await as(ADMIN, () => db.query(`select social_retry_variant($1)`, [scheduledId]));
+    const row = (await db.query(`select status, attempts, last_error, claimed_at, scheduled_at <= now() as due from social_variants where id = $1`, [scheduledId])).rows[0];
+    expect(row).toEqual({ status: "scheduled", attempts: 0, last_error: null, claimed_at: null, due: true });
+  });
+
+  it("only reviewers may call it", async () => {
+    await expect(as(STRANGER, () => db.query(`select social_retry_variant($1)`, [scheduledId]))).rejects.toThrow(/not allowed/);
+    expect((await failedId())).toBe(scheduledId); // untouched
+  });
+
+  it("only a failed post can be retried: not a draft, not a missing one", async () => {
+    await expect(as(ADMIN, () => db.query(`select social_retry_variant($1)`, [draftId]))).rejects.toThrow(/not a failed variant/);
+    await expect(as(ADMIN, () => db.query(`select social_retry_variant(gen_random_uuid())`))).rejects.toThrow(/not a failed variant/);
+    expect((await db.query(`select status from social_variants where id = $1`, [draftId])).rows[0]).toEqual({ status: "draft" });
+  });
+
+  it("the function is not callable without signing in", async () => {
+    await expect(db.exec(`set role authenticated; select set_config('test.uid', '', false); select social_retry_variant('${scheduledId}'); reset role;`)).rejects.toThrow(/not allowed/);
+    await db.exec(`reset role`);
+  });
+});

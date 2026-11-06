@@ -53,6 +53,12 @@ export class MemoryStore implements Store {
   private variants = new Map<string, PostVariant>();
   private mediaJobs = new Map<string, MediaJob>();
 
+  constructor(private readonly opts: { now?: () => Date } = {}) {}
+
+  private now() {
+    return (this.opts.now ?? (() => new Date()))().toISOString();
+  }
+
   async putAsset(asset: Asset) {
     this.assets.set(asset.id, structuredClone(asset));
   }
@@ -112,6 +118,7 @@ export class MemoryStore implements Store {
     const b = this.briefs.get(id);
     if (!b || (b.status ?? "ready") !== from) return undefined;
     b.status = to;
+    b.claimedAt = this.now();
     return structuredClone(b);
   }
 
@@ -157,6 +164,7 @@ export class MemoryStore implements Store {
     const v = this.variants.get(id);
     if (!v || v.status !== from) return undefined;
     v.status = to;
+    v.claimedAt = this.now();
     return structuredClone(v);
   }
 }

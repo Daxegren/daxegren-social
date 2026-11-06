@@ -109,6 +109,16 @@ export function ReviewQueue({ api }: { api: SocialApi }) {
                 </a>
               )}
               {v.lastError && <p className="mt-1 text-xs text-red-600">{v.lastError}</p>}
+              {tab === "failed" && (
+                <button
+                  type="button"
+                  className="mt-2 rounded border border-slate-300 px-3 py-1.5 text-sm text-slate-700 disabled:opacity-40"
+                  disabled={busyId === v.id}
+                  onClick={() => act(v.id, () => api.retry(v.id))}
+                >
+                  Försök igen
+                </button>
+              )}
             </li>
           ))}
         </ul>

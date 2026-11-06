@@ -129,6 +129,23 @@ describe.each(makers)("Store contract: %s", (_name, make) => {
     expect((await store.getMediaJob(running.id))!.status).toBe("completed");
   });
 
+  it("a claim records when the work started, for variants and briefs", async () => {
+    const b = brief();
+    await store.putBrief({ ...b, status: "requested", channels: ["linkedin"] });
+    const v = variant(b.id, { status: "scheduled", scheduledAt: T });
+    await store.putVariant(v);
+    expect((await store.getVariant(v.id))!.claimedAt).toBeUndefined();
+
+    const before = Date.now();
+    const claimedV = await store.transitionVariant(v.id, "scheduled", "publishing");
+    const claimedB = await store.transitionBrief(b.id, "requested", "processing");
+    for (const at of [claimedV!.claimedAt, claimedB!.claimedAt]) {
+      expect(Date.parse(at!)).toBeGreaterThanOrEqual(before - 1000);
+      expect(Date.parse(at!)).toBeLessThanOrEqual(Date.now() + 1000);
+    }
+    expect((await store.getVariant(v.id))!.claimedAt).toBe(claimedV!.claimedAt);
+  });
+
   it("upsertPost is keyed on (channel, externalId) and keeps id, metrics and provenance", async () => {
     const variantId = uuid();
     const b = brief();

@@ -12,6 +12,11 @@ export interface VideoRequest {
   prompt: string;
   /** Public https URL of the source image (image-to-video models). */
   sourceImageUri?: string;
+  /**
+   * One key per intended generation. Sending the same key again after an ambiguous failure returns the original
+   * request instead of creating (and charging for) another.
+   */
+  idempotencyKey?: string;
 }
 
 export interface VideoJobState {
@@ -69,7 +74,10 @@ export interface VideoModel {
   note: string;
 }
 
-/** Curated subset of the Higgsfield catalogue (not the full list). Verify ids against their docs. */
+/**
+ * Curated subset of the Higgsfield catalogue. Kling 2.5 Standard/Pro and Hailuo 2.3 are listed in Higgsfield's OpenAPI file
+ * (checked 2026-11-06); Kling 3.0 Turbo and Seedance 2.0 are not, which the docs say does not mean they are unavailable.
+ */
 export const VIDEO_MODELS: readonly VideoModel[] = [
   {
     id: "kling-video/v2.5-turbo/standard/image-to-video",
@@ -77,6 +85,13 @@ export const VIDEO_MODELS: readonly VideoModel[] = [
     mode: "image-to-video",
     durationSeconds: 5,
     note: "Cheapest model with exactly 5 s. Good motion for product clips.",
+  },
+  {
+    id: "kling-video/v2.5-turbo/pro/image-to-video",
+    label: "Kling 2.5 Turbo Pro",
+    mode: "image-to-video",
+    durationSeconds: 5,
+    note: "Higher quality than Standard, higher price.",
   },
   {
     id: "minimax/hailuo-2.3/standard/image-to-video",

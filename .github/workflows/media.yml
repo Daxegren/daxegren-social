@@ -13,6 +13,7 @@ on:
         default: kling-video/v2.5-turbo/standard/image-to-video
         options:
           - kling-video/v2.5-turbo/standard/image-to-video
+          - kling-video/v2.5-turbo/pro/image-to-video
           - minimax/hailuo-2.3/standard/image-to-video
           - kling-video/v3.0-turbo/image-to-video
           - bytedance/seedance-2.0/text-to-video

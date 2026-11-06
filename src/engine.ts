@@ -1,7 +1,7 @@
 import { analyzeChannel, suggestTime, type ChannelInsights } from "./analyze.js";
 import { CHANNEL_LABELS, validateVariant } from "./channels.js";
 import type { Asset, AssetKind, Channel, ContentBrief, MediaJob, PostVariant, PublishedPost } from "./domain.js";
-import { NotSupportedError, type ChannelAdapter, type FetchLike, type RemotePost } from "./adapters/types.js";
+import { AdapterError, NotSupportedError, type ChannelAdapter, type FetchLike, type RemotePost } from "./adapters/types.js";
 import type { ContentGenerator } from "./generate.js";
 import {
   buildImagePrompt,
@@ -31,6 +31,8 @@ export interface EngineConfig {
   mediaStorage?: MediaStorage;
   /** Paid image generation (synchronous). Also needs `mediaStorage`. */
   imageGenerator?: ImageGenerator;
+  /** Pause between safe retries of a video submission. Injectable for tests. */
+  sleep?: (ms: number) => Promise<void>;
   /** Monthly spend limit for media generation, in USD. Default 50. */
   mediaMonthlyCapUsd?: number;
   fetch?: FetchLike;
@@ -182,7 +184,19 @@ export class ContentEngine {
     await this.store.putMediaJob(job);
 
     try {
-      const { providerJobId } = await generator.submit(request);
+      // The job id is the idempotency key: after a timeout or 5xx we cannot know whether the provider accepted the
+      // request, and resubmitting with the same key returns the original instead of creating (and charging) another.
+      const sleep = this.cfg.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+      let providerJobId: string | undefined;
+      for (let attempt = 1; providerJobId === undefined; attempt++) {
+        try {
+          providerJobId = (await generator.submit({ ...request, idempotencyKey: job.id })).providerJobId;
+        } catch (err) {
+          const permanent = err instanceof AdapterError && err.permanent;
+          if (permanent || attempt >= 3) throw err;
+          await sleep(attempt * 2000);
+        }
+      }
       job.providerJobId = providerJobId;
       job.status = "in_progress";
     } catch (err) {

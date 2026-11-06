@@ -73,6 +73,9 @@ export class FakeVideoGenerator implements VideoGenerator {
   /** What status() returns, in order; the last one repeats. */
   states: VideoJobState[] = [{ status: "completed", videoUrl: "https://provider.test/v.mp4" }];
   submitError?: Error;
+  /** Errors thrown (in order) by successive submit calls before one succeeds. */
+  submitFailures: Error[] = [];
+  attempts: VideoRequest[] = [];
   statusError?: Error;
 
   async estimate(): Promise<MediaCost> {
@@ -80,6 +83,9 @@ export class FakeVideoGenerator implements VideoGenerator {
   }
 
   async submit(req: VideoRequest) {
+    this.attempts.push(req);
+    const failure = this.submitFailures.shift();
+    if (failure) throw failure;
     if (this.submitError) throw this.submitError;
     this.submitted.push(req);
     return { providerJobId: `job-${this.submitted.length}-abcdefgh` };

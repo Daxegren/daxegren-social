@@ -9,7 +9,10 @@ export interface HiggsfieldConfig {
   fetch?: FetchLike;
 }
 
-/** Per-model request body. Only fields documented for that endpoint. */
+/**
+ * Per-model request body. Only fields documented for that endpoint (checked against Higgsfield's OpenAPI file 2026-11-06:
+ * Kling 2.5 takes prompt, image_url, duration 5|10; Hailuo 2.3 takes prompt, image_url, duration 6|10).
+ */
 export function buildHiggsfieldBody(model: string, prompt: string, imageUrl: string | undefined): Record<string, unknown> {
   if (model.startsWith("bytedance/seedance-2.0/text-to-video")) {
     return { prompt, duration: 5, resolution: "480p", aspect_ratio: "9:16", generate_audio: false };
@@ -48,13 +51,14 @@ export class HiggsfieldVideoGenerator implements VideoGenerator {
       discount?: { usd?: string };
     };
     const quoted = parseUsd(r.discount?.usd) ?? parseUsd(r.usd);
-    if (r.type === "estimate" && quoted !== undefined) return { usd: quoted, isEstimate: true, source: "Higgsfield estimate API" };
+    // The documented response is just {"usd": "0.094"}; some models answer with a description instead of a price.
+    if ((r.type === undefined || r.type === "estimate") && quoted !== undefined) return { usd: quoted, isEstimate: true, source: "Higgsfield estimate API" };
     return { usd: seedanceEstimateUsd(), isEstimate: true, source: "computed from Higgsfield's price formula" };
   }
 
   async submit(req: VideoRequest): Promise<{ providerJobId: string }> {
     this.assertKnown(req.model);
-    const r = (await this.call(`/${req.model}`, "POST", buildHiggsfieldBody(req.model, req.prompt, req.sourceImageUri))) as {
+    const r = (await this.call(`/${req.model}`, "POST", buildHiggsfieldBody(req.model, req.prompt, req.sourceImageUri), req.idempotencyKey)) as {
       request_id?: string;
     };
     if (!r.request_id) throw new AdapterError("Higgsfield returned no request_id", false);
@@ -68,6 +72,7 @@ export class HiggsfieldVideoGenerator implements VideoGenerator {
       video?: { url?: string };
       cost?: { usd?: unknown };
       usd?: unknown;
+      error?: string | null;
     };
     switch (r.status) {
       case "completed":
@@ -77,7 +82,7 @@ export class HiggsfieldVideoGenerator implements VideoGenerator {
       case "canceled":
         return {
           status: "failed",
-          error: r.status === "nsfw" ? "Stopped by the content filter (not charged)." : `Job ${r.status} (not charged).`,
+          error: r.status === "nsfw" ? "Stopped by the content filter (not charged)." : `Job ${r.status}${r.error ? `: ${r.error}` : ""} (not charged).`,
         };
       case "in_progress":
         return { status: "in_progress" };
@@ -90,12 +95,16 @@ export class HiggsfieldVideoGenerator implements VideoGenerator {
     if (!findVideoModel(model)) throw new AdapterError(`unknown video model "${model}"`, true);
   }
 
-  private async call(path: string, method: "GET" | "POST", body?: unknown): Promise<unknown> {
+  private async call(path: string, method: "GET" | "POST", body?: unknown, idempotencyKey?: string): Promise<unknown> {
     let res: Response;
     try {
       res = await this.fetchFn(`${BASE}${path}`, {
         method,
-        headers: { Authorization: `Key ${this.cfg.apiKey}`, "Content-Type": "application/json" },
+        headers: {
+          Authorization: `Key ${this.cfg.apiKey}`,
+          "Content-Type": "application/json",
+          ...(idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {}),
+        },
         body: body === undefined ? undefined : JSON.stringify(body),
       });
     } catch (err) {
@@ -104,9 +113,29 @@ export class HiggsfieldVideoGenerator implements VideoGenerator {
     const text = await res.text();
     if (!res.ok) {
       const transient = res.status === 429 || res.status >= 500;
-      throw new AdapterError(`Higgsfield ${res.status}: ${this.scrub(text.slice(0, 300))}`, !transient, res.status);
+      throw new AdapterError(`Higgsfield ${res.status}: ${this.scrub(this.describe(res.status, text))}`, !transient, res.status);
     }
     return text ? JSON.parse(text) : {};
+  }
+
+  /** Errors use a `{"detail": …}` envelope; add what the status means in the docs. */
+  private describe(status: number, text: string): string {
+    let detail = text.slice(0, 300);
+    try {
+      const d = (JSON.parse(text) as { detail?: unknown }).detail;
+      if (d !== undefined) detail = (typeof d === "string" ? d : JSON.stringify(d)).slice(0, 300);
+    } catch {
+      /* not JSON: use the raw text */
+    }
+    const hint: Record<number, string> = {
+      401: "check HIGGSFIELD_API_KEY",
+      403: "insufficient balance: add funds in Higgsfield",
+      404: "model or request not found for this account",
+      422: "invalid request, or the idempotency key was reused with different parameters",
+      423: "the model is temporarily blocked",
+      429: "queue full or rate limited",
+    };
+    return hint[status] ? `${detail} (${hint[status]})` : detail;
   }
 
   /** Never let the credential reach logs or error messages. */

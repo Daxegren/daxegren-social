@@ -20,7 +20,7 @@ export interface Wiring {
 }
 
 /** Builds the engine from environment variables. A channel is enabled when its credentials are present. */
-export function buildEngine(env: Env, store: Store, opts: { fetch?: FetchLike; now?: () => Date } = {}): Wiring {
+export function buildEngine(env: Env, store: Store, opts: { fetch?: FetchLike; now?: () => Date; sleep?: (ms: number) => Promise<void> } = {}): Wiring {
   const adapters: Partial<Record<Channel, ChannelAdapter>> = {};
 
   if (env.INSTAGRAM_USER_ID && env.INSTAGRAM_ACCESS_TOKEN) {
@@ -67,6 +67,7 @@ export function buildEngine(env: Env, store: Store, opts: { fetch?: FetchLike; n
       generator,
       autoApprove,
       now: opts.now,
+      sleep: opts.sleep,
       fetch: opts.fetch,
       notifier,
       appUrl: env.APP_URL,

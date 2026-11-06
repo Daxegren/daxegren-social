@@ -74,7 +74,10 @@ One repository, `@daxegren/social-engine`, standalone:
 | LinkedIn | text, one image | via `importPosts` | no |
 | TikTok, Pinterest, YouTube, X, Snapchat | not yet — implement `ChannelAdapter` | | |
 
-Video generation is ported from the `content.generate.media` capability in Ecomduct CoPilot (Higgsfield). Image
+Video generation is ported from the `content.generate.media` capability in Ecomduct CoPilot (Higgsfield) and checked
+against Higgsfield's documentation and OpenAPI file (2026-11-06): statuses, the estimate and idempotency behaviour,
+and the request fields of Kling 2.5 Standard/Pro and Hailuo 2.3. Kling 3.0 Turbo and Seedance 2.0 are not in that file,
+so their endpoints are unconfirmed. Nothing has been run against a live key. Image
 generation uses the Gemini API directly, because the Ecomduct CoPilot and Cockpit X implementations call OpenAI image
 models through the Lovable AI Gateway, which only works inside Lovable. The Gemini adapter follows Google's documentation of
 the Interactions API (checked 2026-11-06) but has not yet been run against a live key.

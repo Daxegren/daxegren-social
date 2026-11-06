@@ -67,7 +67,7 @@ export async function runCli(argv: string[], deps: CliDeps): Promise<string> {
   }
   if (command === "migrate") return `applied: ${JSON.stringify(await migrate(deps.sql))}`;
 
-  const { engine, configuredChannels, notifier } = buildEngine(deps.env, new PostgresStore(deps.sql), { fetch: deps.fetch, now: deps.now });
+  const { engine, configuredChannels, notifier } = buildEngine(deps.env, new PostgresStore(deps.sql), { fetch: deps.fetch, now: deps.now, sleep: deps.sleep });
 
   switch (command) {
     case "notify-test": {

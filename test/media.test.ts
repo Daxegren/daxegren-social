@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { HiggsfieldVideoGenerator, buildHiggsfieldBody } from "../src/adapters/higgsfield.js";
 import { SupabaseStorage } from "../src/adapters/supabase-storage.js";
 import { ContentEngine } from "../src/engine.js";
+import { AdapterError } from "../src/adapters/types.js";
 import { MediaCapReachedError, checkMonthlyCap, monthStartIso } from "../src/media.js";
 import { MemoryStore } from "../src/store.js";
 import { FakeGenerator, FakeVideoGenerator, MemoryStorage, json, mockFetch } from "./helpers.js";
@@ -24,6 +25,7 @@ function setup(over: { cap?: number; video?: FakeVideoGenerator; fetch?: typeof 
     mediaStorage: storage,
     mediaMonthlyCapUsd: over.cap,
     fetch: fetchFn,
+    sleep: async () => {},
     now: () => now,
   });
   return { store, video, storage, engine, advance: (ms: number) => (now = new Date(now.getTime() + ms)) };
@@ -196,6 +198,9 @@ describe("HiggsfieldVideoGenerator", () => {
     const quoted = mockFetch([{ match: () => true, reply: () => json({ type: "estimate", usd: "0.12", discount: { usd: "0.10" } }) }]);
     expect(await new HiggsfieldVideoGenerator({ apiKey: KEY, fetch: quoted.fn }).estimate({ model, prompt: "p", sourceImageUri: SRC })).toMatchObject({ usd: 0.1, isEstimate: true });
 
+    const plain = mockFetch([{ match: () => true, reply: () => json({ usd: "0.094" }) }]); // the documented shape: no `type` field
+    expect(await new HiggsfieldVideoGenerator({ apiKey: KEY, fetch: plain.fn }).estimate({ model, prompt: "p", sourceImageUri: SRC })).toMatchObject({ usd: 0.094, isEstimate: true, source: "Higgsfield estimate API" });
+
     const described = mockFetch([{ match: () => true, reply: () => json({ type: "description" }) }]);
     const est = await new HiggsfieldVideoGenerator({ apiKey: KEY, fetch: described.fn }).estimate({ model: "bytedance/seedance-2.0/text-to-video", prompt: "p" });
     expect(est.usd).toBeGreaterThan(0);
@@ -225,6 +230,80 @@ describe("HiggsfieldVideoGenerator", () => {
     const g = new HiggsfieldVideoGenerator({ apiKey: KEY, fetch: mockFetch([]).fn });
     await expect(g.status("../../admin")).rejects.toThrow(/invalid job id/);
     await expect(g.submit({ model: "evil/model", prompt: "p" })).rejects.toThrow(/unknown video model/);
+  });
+});
+
+describe("Higgsfield: idempotency and errors", () => {
+  const KEY = "keyid1234:secretsecret99";
+  const model = "kling-video/v2.5-turbo/standard/image-to-video";
+  const submit = (key?: string) => {
+    const m = mockFetch([{ match: (u) => u.endsWith(`/${model}`), reply: () => json({ request_id: "req-12345678" }) }]);
+    return new HiggsfieldVideoGenerator({ apiKey: KEY, fetch: m.fn }).submit({ model, prompt: "p", sourceImageUri: SRC, idempotencyKey: key }).then(() => m.calls[0]!);
+  };
+
+  it("sends the Idempotency-Key header on submit when given, and none otherwise", async () => {
+    expect((await submit("job-uuid-1")).init!.headers).toMatchObject({ "Idempotency-Key": "job-uuid-1" });
+    expect(Object.keys((await submit()).init!.headers as object)).not.toContain("Idempotency-Key");
+  });
+
+  it("explains errors from the {detail} envelope, with what the status means", async () => {
+    const fail = (status: number, body: unknown) =>
+      new HiggsfieldVideoGenerator({ apiKey: KEY, fetch: mockFetch([{ match: () => true, reply: () => json(body, { status }) }]).fn }).submit({ model, prompt: "p", sourceImageUri: SRC }).catch((e) => e);
+    expect(await fail(403, { detail: "Insufficient balance" })).toMatchObject({ permanent: true, message: "Higgsfield 403: Insufficient balance (insufficient balance: add funds in Higgsfield)" });
+    expect((await fail(401, { detail: "Invalid credentials" })).message).toContain("check HIGGSFIELD_API_KEY");
+    expect(await fail(422, { detail: [{ loc: ["body"], msg: "bad" }] })).toMatchObject({ permanent: true, message: expect.stringContaining("idempotency key") });
+    expect(await fail(429, { detail: "account_queue_full" })).toMatchObject({ permanent: false });
+    expect(await fail(503, { detail: "admission_control_unavailable" })).toMatchObject({ permanent: false });
+  });
+
+  it("passes on the provider's reason for a failed generation", async () => {
+    const g = new HiggsfieldVideoGenerator({ apiKey: KEY, fetch: mockFetch([{ match: () => true, reply: () => json({ status: "failed", error: "Generation failed" }) }]).fn });
+    expect(await g.status("req-12345678")).toEqual({ status: "failed", error: "Job failed: Generation failed (not charged)." });
+  });
+});
+
+describe("engine: safe retries of a video submission", () => {
+  it("retries a transient failure with the same idempotency key (the job id) and succeeds", async () => {
+    const video = new FakeVideoGenerator();
+    video.submitFailures = [new AdapterError("timeout", false), new AdapterError("HTTP 503", false, 503)];
+    const sleeps: number[] = [];
+    const engine = new ContentEngine({ store: new MemoryStore(), adapters: {}, generator: new FakeGenerator(), videoGenerator: video, mediaStorage: new MemoryStorage(), sleep: async (ms) => void sleeps.push(ms), now: () => T0 });
+    const job = await engine.startVideo({ prompt: "x", sourceImageUri: SRC });
+
+    expect(job.status).toBe("in_progress");
+    expect(video.attempts).toHaveLength(3);
+    expect(new Set(video.attempts.map((a) => a.idempotencyKey))).toEqual(new Set([job.id])); // one key, all attempts
+    expect(sleeps).toEqual([2000, 4000]);
+  });
+
+  it("does not retry a permanent failure (bad key, no balance)", async () => {
+    const video = new FakeVideoGenerator();
+    video.submitFailures = [new AdapterError("Higgsfield 403: insufficient balance", true, 403)];
+    const store = new MemoryStore();
+    const engine = new ContentEngine({ store, adapters: {}, generator: new FakeGenerator(), videoGenerator: video, mediaStorage: new MemoryStorage(), sleep: async () => {}, now: () => T0 });
+    await expect(engine.startVideo({ prompt: "x", sourceImageUri: SRC })).rejects.toThrow(/insufficient balance/);
+    expect(video.attempts).toHaveLength(1);
+    expect((await store.listMediaJobs())[0]).toMatchObject({ status: "failed", actualCostUsd: 0 });
+  });
+
+  it("gives up after three attempts and records the job as failed", async () => {
+    const video = new FakeVideoGenerator();
+    video.submitError = new AdapterError("HTTP 503", false, 503);
+    const store = new MemoryStore();
+    const engine = new ContentEngine({ store, adapters: {}, generator: new FakeGenerator(), videoGenerator: video, mediaStorage: new MemoryStorage(), sleep: async () => {}, now: () => T0 });
+    await expect(engine.startVideo({ prompt: "x", sourceImageUri: SRC })).rejects.toThrow(/503/);
+    expect(video.attempts).toHaveLength(3);
+    expect((await store.listMediaJobs())[0]).toMatchObject({ status: "failed" });
+  });
+});
+
+describe("video models and the Generate video workflow", () => {
+  it("offer exactly the same models, so a model cannot exist in only one place", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { VIDEO_MODELS } = await import("../src/media.js");
+    const yaml = readFileSync(new URL("../.github/workflows/media.yml", import.meta.url), "utf8");
+    const options = [...yaml.matchAll(/^\s+- ([a-z0-9][a-z0-9./-]+)\s*$/gm)].map((m) => m[1]).filter((id) => id!.includes("/"));
+    expect(options.sort()).toEqual(VIDEO_MODELS.map((m) => m.id).sort());
   });
 });
 

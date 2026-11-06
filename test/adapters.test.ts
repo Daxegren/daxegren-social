@@ -148,3 +148,52 @@ describe("LinkedInAdapter", () => {
     await expect(li.fetchPublished()).rejects.toMatchObject({ permanent: true });
   });
 });
+
+describe("InstagramAdapter: carousels", () => {
+  const form = (init?: RequestInit) => new URLSearchParams(String(init!.body));
+
+  it("builds one container per item, then a parent that carries the caption, then publishes the parent", async () => {
+    let n = 0;
+    const { fn, calls } = mockFetch([
+      { match: (u) => u.endsWith("/123/media"), reply: () => json({ id: `c${++n}` }) },
+      { match: (u) => /\/c\d\?/.test(u), reply: () => json({ status_code: "FINISHED" }) },
+      { match: (u) => u.endsWith("/123/media_publish"), reply: () => json({ id: "m9" }) },
+      { match: (u) => u.includes("/m9?"), reply: () => json({ permalink: "https://instagram.com/p/car" }) },
+    ]);
+    const ig = new InstagramAdapter({ igUserId: "123", accessToken: "tok", fetch: fn, sleep: async () => {} });
+    const items: Asset[] = [asset("image", "https://cdn.test/1.jpg"), asset("video", "https://cdn.test/2.mp4"), asset("image", "https://cdn.test/3.jpg")];
+
+    const res = await ig.publish(variant("instagram", "Svep →"), items);
+
+    expect(res).toEqual({ externalId: "m9", url: "https://instagram.com/p/car" });
+    const creates = calls.filter((c) => c.url.endsWith("/123/media"));
+    expect(creates).toHaveLength(4); // 3 items + the parent
+    expect(Object.fromEntries(form(creates[0]!.init))).toMatchObject({ is_carousel_item: "true", image_url: "https://cdn.test/1.jpg" });
+    expect(Object.fromEntries(form(creates[0]!.init))).not.toHaveProperty("caption"); // caption belongs to the parent only
+    expect(Object.fromEntries(form(creates[1]!.init))).toMatchObject({ is_carousel_item: "true", media_type: "VIDEO", video_url: "https://cdn.test/2.mp4" });
+    expect(Object.fromEntries(form(creates[3]!.init))).toMatchObject({ media_type: "CAROUSEL", children: "c1,c2,c3", caption: "Svep →" });
+    expect(form(calls.find((c) => c.url.endsWith("/media_publish"))!.init).get("creation_id")).toBe("c4");
+    // the video child and the parent are polled until FINISHED; image children are not
+    const polled = calls.filter((c) => /\/c\d\?/.test(c.url)).map((c) => c.url.match(/\/(c\d)\?/)![1]);
+    expect(polled).toEqual(["c2", "c4"]);
+  });
+
+  it("stops before publishing when a video child fails to process", async () => {
+    const { fn, calls } = mockFetch([
+      { match: (u) => u.endsWith("/123/media"), reply: () => json({ id: "c1" }) },
+      { match: (u) => u.includes("/c1?"), reply: () => json({ status_code: "ERROR" }) },
+    ]);
+    const ig = new InstagramAdapter({ igUserId: "123", accessToken: "tok", fetch: fn, sleep: async () => {} });
+    await expect(ig.publish(variant("instagram"), [asset("video", "https://cdn.test/a.mp4"), asset("image", "https://cdn.test/b.jpg")])).rejects.toMatchObject({ permanent: true });
+    expect(calls.some((c) => c.url.endsWith("/media_publish"))).toBe(false);
+  });
+
+  it("accepts up to ten items, and refuses none or eleven without calling Instagram", async () => {
+    const { fn, calls } = mockFetch([]);
+    const ig = new InstagramAdapter({ igUserId: "123", accessToken: "tok", fetch: fn });
+    const many = Array.from({ length: 11 }, (_, i) => asset("image", `https://cdn.test/${i}.jpg`));
+    await expect(ig.publish(variant("instagram"), many)).rejects.toThrow(/at most 10/);
+    await expect(ig.publish(variant("instagram"), [])).rejects.toThrow(/at least one/);
+    expect(calls).toHaveLength(0);
+  });
+});

@@ -141,6 +141,15 @@ export async function runDoctor(deps: DoctorDeps): Promise<Check[]> {
     return ok("instagram", `token works; account ${body.username ?? env.INSTAGRAM_USER_ID}`);
   });
 
+  await run("facebook", async () => {
+    if (!env.FACEBOOK_PAGE_ID || !env.FACEBOOK_PAGE_ACCESS_TOKEN) return skip("facebook", "FACEBOOK_PAGE_ID / FACEBOOK_PAGE_ACCESS_TOKEN not set");
+    const qs = new URLSearchParams({ fields: "id,name", access_token: env.FACEBOOK_PAGE_ACCESS_TOKEN });
+    const res = await f(`https://graph.facebook.com/v21.0/${encodeURIComponent(env.FACEBOOK_PAGE_ID)}?${qs}`);
+    const body = (await res.json().catch(() => ({}))) as { name?: string; error?: { message?: string } };
+    if (!res.ok) return fail("facebook", scrubSecrets(`HTTP ${res.status}: ${body.error?.message ?? "request failed"}`, env));
+    return ok("facebook", `token works; page ${body.name ?? env.FACEBOOK_PAGE_ID}. Posting also needs the pages_manage_posts permission`);
+  });
+
   await run("linkedin", async () => {
     if (!env.LINKEDIN_AUTHOR_URN || !env.LINKEDIN_ACCESS_TOKEN) return skip("linkedin", "LINKEDIN_AUTHOR_URN / LINKEDIN_ACCESS_TOKEN not set");
     return /^urn:li:(person|organization):[A-Za-z0-9_-]+$/.test(env.LINKEDIN_AUTHOR_URN)

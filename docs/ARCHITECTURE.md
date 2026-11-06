@@ -69,16 +69,18 @@ One repository, `@daxegren/social-engine`, standalone:
 
 | Channel | Publish | Ingest | Metrics |
 |---|---|---|---|
-| Instagram | image, reel | yes (likes, comments) | likes, comments |
+| Instagram | image, reel, carousel (2–10 images/videos) | yes (likes, comments) | likes, comments |
+| Facebook (Page) | text, photo(s), video | yes (reactions, comments, shares) | reactions, comments, shares |
 | LinkedIn | text, one image | via `importPosts` | no |
-| Facebook, TikTok, Pinterest, YouTube, X, Snapchat | not yet — implement `ChannelAdapter` | | |
+| TikTok, Pinterest, YouTube, X, Snapchat | not yet — implement `ChannelAdapter` | | |
 
 Video generation is ported from the `content.generate.media` capability in Ecomduct CoPilot (Higgsfield). Image
 generation uses the Gemini API directly, because the Ecomduct CoPilot and Cockpit X implementations call OpenAI image
 models through the Lovable AI Gateway, which only works inside Lovable. The Gemini adapter has not yet been confirmed
 against a live key.
 
-Not built yet: Instagram carousels and richer insights (reach/saves), video
-upload flows for the other channels. Platform limits in
+Not built yet: richer insights (reach/saves), video
+upload flows for the other channels. The Facebook adapter and the Instagram carousel were written from memory of the Graph API and have not been
+confirmed against a live account. Platform limits in
 `channels.ts` and API versions in the adapters should be checked against current platform documentation before
 production use.

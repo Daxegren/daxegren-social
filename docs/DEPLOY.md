@@ -54,6 +54,7 @@ Repository → Settings → Secrets and variables → Actions:
 |---|---|
 | `DATABASE_URL` | everything (pooler connection string) |
 | `ANTHROPIC_API_KEY` | generating drafts |
+| `FACEBOOK_PAGE_ID`, `FACEBOOK_PAGE_ACCESS_TOKEN` | publishing to / learning from a Facebook Page. A **Page** access token with `pages_manage_posts` and `pages_read_engagement`; the same Meta app review as Instagram applies |
 | `LINKEDIN_AUTHOR_URN`, `LINKEDIN_ACCESS_TOKEN` | publishing to LinkedIn |
 | `INSTAGRAM_USER_ID`, `INSTAGRAM_ACCESS_TOKEN` | publishing to / learning from Instagram |
 | `HIGGSFIELD_API_KEY` (`KEY_ID:KEY_SECRET`) | generating video |
@@ -105,5 +106,5 @@ posts are published by the next tick.
   **Försök igen** on the *Misslyckade* tab. An abandoned request is marked failed the same way (order it again).
 - **Public repo.** Code and docs are public. Secrets live only in Actions secrets and are not exposed to
   workflows triggered from forks. Never commit tokens or `.env` files.
-- **Platform access.** Instagram publishing needs a business/creator account and Meta app review; LinkedIn
+- **Platform access.** Instagram and Facebook publishing need a business/creator account / a Page and Meta app review; LinkedIn
   needs the Posts API product. Neither is something this repo can do for you.

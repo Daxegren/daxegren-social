@@ -9,6 +9,7 @@ export * from "./notify.js";
 export * from "./scheduler.js";
 export * from "./engine.js";
 export * from "./adapters/types.js";
+export { FacebookAdapter, type FacebookConfig } from "./adapters/facebook.js";
 export { InstagramAdapter, type InstagramConfig } from "./adapters/instagram.js";
 export { LinkedInAdapter, type LinkedInConfig } from "./adapters/linkedin.js";
 export { GeminiImageGenerator, type GeminiImageConfig } from "./adapters/gemini-image.js";

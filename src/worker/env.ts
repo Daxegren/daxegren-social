@@ -1,4 +1,5 @@
 import { GeminiImageGenerator } from "../adapters/gemini-image.js";
+import { FacebookAdapter } from "../adapters/facebook.js";
 import { HiggsfieldVideoGenerator } from "../adapters/higgsfield.js";
 import { InstagramAdapter } from "../adapters/instagram.js";
 import { LinkedInAdapter } from "../adapters/linkedin.js";
@@ -24,6 +25,9 @@ export function buildEngine(env: Env, store: Store, opts: { fetch?: FetchLike; n
 
   if (env.INSTAGRAM_USER_ID && env.INSTAGRAM_ACCESS_TOKEN) {
     adapters.instagram = new InstagramAdapter({ igUserId: env.INSTAGRAM_USER_ID, accessToken: env.INSTAGRAM_ACCESS_TOKEN, fetch: opts.fetch });
+  }
+  if (env.FACEBOOK_PAGE_ID && env.FACEBOOK_PAGE_ACCESS_TOKEN) {
+    adapters.facebook = new FacebookAdapter({ pageId: env.FACEBOOK_PAGE_ID, accessToken: env.FACEBOOK_PAGE_ACCESS_TOKEN, fetch: opts.fetch });
   }
   if (env.LINKEDIN_AUTHOR_URN && env.LINKEDIN_ACCESS_TOKEN) {
     adapters.linkedin = new LinkedInAdapter({ authorUrn: env.LINKEDIN_AUTHOR_URN, accessToken: env.LINKEDIN_ACCESS_TOKEN, fetch: opts.fetch });

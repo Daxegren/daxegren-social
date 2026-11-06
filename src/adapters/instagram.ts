@@ -52,23 +52,13 @@ export class InstagramAdapter implements ChannelAdapter {
   }
 
   async publish(variant: PostVariant, assets: Asset[]): Promise<PublishResult> {
-    if (assets.length !== 1) {
-      throw new AdapterError("instagram adapter currently publishes exactly one image or video (carousels: todo)", true);
-    }
-    const asset = assets[0]!;
-    const params: Record<string, string> = { caption: variant.text };
-    if (asset.kind === "image") {
-      params.image_url = asset.uri;
-    } else {
-      params.media_type = "REELS";
-      params.video_url = asset.uri;
-    }
+    if (assets.length === 0) throw new AdapterError("instagram needs at least one image or video", true);
+    if (assets.length > 10) throw new AdapterError("an instagram carousel holds at most 10 items", true);
 
-    const container = await this.post<{ id: string }>(`/${this.cfg.igUserId}/media`, params);
-    if (asset.kind === "video") await this.waitUntilReady(container.id);
+    const container = assets.length === 1 ? await this.singleContainer(variant, assets[0]!) : await this.carouselContainer(variant, assets);
 
     const published = await this.post<{ id: string }>(`/${this.cfg.igUserId}/media_publish`, {
-      creation_id: container.id,
+      creation_id: container,
     });
 
     let url: string | undefined;
@@ -79,6 +69,44 @@ export class InstagramAdapter implements ChannelAdapter {
       // The post is live; a missing permalink must not turn this into a failure (and a duplicate retry).
     }
     return { externalId: published.id, url };
+  }
+
+  /** One image, or one video published as a Reel. Returns the container id. */
+  private async singleContainer(variant: PostVariant, asset: Asset): Promise<string> {
+    const params: Record<string, string> = { caption: variant.text };
+    if (asset.kind === "image") {
+      params.image_url = asset.uri;
+    } else {
+      params.media_type = "REELS";
+      params.video_url = asset.uri;
+    }
+    const container = await this.post<{ id: string }>(`/${this.cfg.igUserId}/media`, params);
+    if (asset.kind === "video") await this.waitUntilReady(container.id);
+    return container.id;
+  }
+
+  /** 2–10 images/videos as one swipeable post: one container per item, then a parent that carries the caption. */
+  private async carouselContainer(variant: PostVariant, assets: Asset[]): Promise<string> {
+    const children: string[] = [];
+    for (const asset of assets) {
+      const params: Record<string, string> = { is_carousel_item: "true" };
+      if (asset.kind === "image") {
+        params.image_url = asset.uri;
+      } else {
+        params.media_type = "VIDEO";
+        params.video_url = asset.uri;
+      }
+      const child = await this.post<{ id: string }>(`/${this.cfg.igUserId}/media`, params);
+      if (asset.kind === "video") await this.waitUntilReady(child.id);
+      children.push(child.id);
+    }
+    const parent = await this.post<{ id: string }>(`/${this.cfg.igUserId}/media`, {
+      media_type: "CAROUSEL",
+      children: children.join(","),
+      caption: variant.text,
+    });
+    await this.waitUntilReady(parent.id);
+    return parent.id;
   }
 
   async fetchPublished(since?: Date): Promise<RemotePost[]> {

@@ -7,7 +7,7 @@ import { claudeClient, DEFAULT_CLAUDE_MODEL } from "../claude.js";
 import { loadBufferAccount } from "../adapters/buffer-channels.js";
 import { bufferService } from "../adapters/buffer.js";
 import { DEFAULT_LINKEDIN_VERSION } from "../adapters/linkedin.js";
-import { buildEngine, parseBufferChannels, type Env } from "./env.js";
+import { buildDrive, buildEngine, parseBufferChannels, type Env } from "./env.js";
 import { migrationFiles } from "./migrate.js";
 
 export type CheckStatus = "ok" | "warn" | "fail" | "skip";
@@ -24,7 +24,7 @@ export interface DoctorDeps {
   now?: () => Date;
 }
 
-const SECRET_KEY = /KEY|TOKEN|SECRET|PASSWORD|DATABASE_URL|NOTIFY_URL/i;
+const SECRET_KEY = /KEY|TOKEN|SECRET|PASSWORD|DATABASE_URL|NOTIFY_URL|SERVICE_ACCOUNT/i;
 
 /** Removes every secret value in `env` from `text`, so no check can leak a credential into a log. */
 export function scrubSecrets(text: string, env: Env): string {
@@ -33,6 +33,15 @@ export function scrubSecrets(text: string, env: Env): string {
     if (!v || v.length < 7 || !SECRET_KEY.test(k)) continue;
     // `id:secret` credentials, and the topic at the end of a webhook address (which is its only protection).
     for (const part of [v, ...v.split(":"), v.split("/").pop() ?? ""]) if (part.length >= 7) out = out.split(part).join("[redacted]");
+    // A service-account key file: the private key itself, however it is formatted.
+    if (v.trimStart().startsWith("{")) {
+      try {
+        const pk = (JSON.parse(v) as { private_key?: string }).private_key;
+        if (pk && pk.length >= 7) out = out.split(pk).join("[redacted]");
+      } catch {
+        /* not JSON */
+      }
+    }
   }
   return out;
 }
@@ -117,6 +126,14 @@ export async function runDoctor(deps: DoctorDeps): Promise<Check[]> {
     if (!res.ok) return fail("storage", `HTTP ${res.status} from Supabase Storage (wrong URL or service-role key?)`);
     const body = (await res.json()) as { public?: boolean };
     return body.public ? ok("storage", `bucket "${bucket}" exists and is public`) : fail("storage", `bucket "${bucket}" exists but is private; the platforms need public URLs`);
+  });
+
+  await run("drive", async () => {
+    if (!env.GOOGLE_SERVICE_ACCOUNT_JSON && !env.DRIVE_FOLDER_ID) return skip("drive", "GOOGLE_SERVICE_ACCOUNT_JSON / DRIVE_FOLDER_ID not set (needed to build posts from photos in Drive)");
+    if (!env.GOOGLE_SERVICE_ACCOUNT_JSON || !env.DRIVE_FOLDER_ID) return fail("drive", "set both GOOGLE_SERVICE_ACCOUNT_JSON and DRIVE_FOLDER_ID");
+    const drive = buildDrive(env, { fetch: f, now });
+    const files = await drive!.listMedia();
+    return ok("drive", `signed in as ${drive!.clientEmail}; ${files.length} photo/video file(s) found in the folder`);
   });
 
   await run("anthropic", async () => {

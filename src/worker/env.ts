@@ -1,5 +1,6 @@
 import { GeminiImageGenerator } from "../adapters/gemini-image.js";
 import { BufferAdapter } from "../adapters/buffer.js";
+import { GoogleDriveSource } from "../adapters/google-drive.js";
 import { FacebookAdapter } from "../adapters/facebook.js";
 import { HiggsfieldVideoGenerator } from "../adapters/higgsfield.js";
 import { InstagramAdapter } from "../adapters/instagram.js";
@@ -25,6 +26,19 @@ export function parseBufferChannels(env: Env): Array<[Channel, string]> {
   }
   if (env.BUFFER_LINKEDIN_CHANNEL_ID && !pairs.has("linkedin")) pairs.set("linkedin", env.BUFFER_LINKEDIN_CHANNEL_ID.trim());
   return [...pairs];
+}
+
+/** Drive photos/videos source, when `GOOGLE_SERVICE_ACCOUNT_JSON` and `DRIVE_FOLDER_ID` are set. */
+export function buildDrive(env: Env, opts: { fetch?: FetchLike; now?: () => Date } = {}): GoogleDriveSource | undefined {
+  if (!env.GOOGLE_SERVICE_ACCOUNT_JSON || !env.DRIVE_FOLDER_ID) return undefined;
+  return new GoogleDriveSource({ serviceAccountJson: env.GOOGLE_SERVICE_ACCOUNT_JSON, folderId: env.DRIVE_FOLDER_ID.trim(), fetch: opts.fetch, now: opts.now });
+}
+
+/** Public media storage (Supabase), when configured. */
+export function buildStorage(env: Env, opts: { fetch?: FetchLike } = {}): SupabaseStorage | undefined {
+  return env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY
+    ? new SupabaseStorage({ url: env.SUPABASE_URL, serviceRoleKey: env.SUPABASE_SERVICE_ROLE_KEY, bucket: env.SOCIAL_MEDIA_BUCKET, fetch: opts.fetch })
+    : undefined;
 }
 
 export interface Wiring {
@@ -103,10 +117,7 @@ export function buildEngine(env: Env, store: Store, opts: { fetch?: FetchLike; n
           })
         : undefined,
       videoGenerator: env.HIGGSFIELD_API_KEY ? new HiggsfieldVideoGenerator({ apiKey: env.HIGGSFIELD_API_KEY, fetch: opts.fetch }) : undefined,
-      mediaStorage:
-        env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY
-          ? new SupabaseStorage({ url: env.SUPABASE_URL, serviceRoleKey: env.SUPABASE_SERVICE_ROLE_KEY, bucket: env.SOCIAL_MEDIA_BUCKET, fetch: opts.fetch })
-          : undefined,
+      mediaStorage: buildStorage(env, { fetch: opts.fetch }),
     }),
     configuredChannels: Object.keys(adapters) as Channel[],
   };

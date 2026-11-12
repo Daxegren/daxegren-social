@@ -1,0 +1,29 @@
+name: Drive sync
+# Copies new photos/videos from your Google Drive folder into storage, so posts can be built from them.
+# Runs every 6 hours and on demand. Free: no AI or media provider is called.
+# Needs the secrets GOOGLE_SERVICE_ACCOUNT_JSON, DRIVE_FOLDER_ID, DATABASE_URL, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY.
+on:
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+concurrency:
+  group: drive-sync
+  cancel-in-progress: false
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npm run build
+      - run: node dist/worker/main.js drive-sync
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SOCIAL_MEDIA_BUCKET: ${{ vars.SOCIAL_MEDIA_BUCKET }}
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          DRIVE_FOLDER_ID: ${{ secrets.DRIVE_FOLDER_ID }}

@@ -5,7 +5,8 @@ import { IMAGE_ASPECTS, type ImageAspect } from "../media.js";
 import type { FetchLike } from "../adapters/types.js";
 import { PostgresStore, type SqlClient } from "../postgres-store.js";
 import { formatReport, runDoctor } from "./doctor.js";
-import { buildEngine, type Env } from "./env.js";
+import { buildDrive, buildEngine, buildStorage, type Env } from "./env.js";
+import { describeDriveSync, syncDrive } from "../drive-sync.js";
 import { listBufferChannels } from "../adapters/buffer-channels.js";
 import { parsePosts } from "./importer.js";
 import { migrate } from "./migrate.js";
@@ -21,6 +22,8 @@ export const USAGE = `usage: social <command>
   refresh-metrics <channel>                 update metrics on known posts
   import <channel> <file.csv|file.json>     load posts you already published (with metrics, if you have them)
            [--dry-run]
+  drive-sync                                copy new photos/videos from your Drive folder into storage (no cost)
+           [--max <n>]
   add-asset <image|video> <https-url>       register a photo or video you made yourself; prints its id
   media video "<prompt>"                    generate a video (costs money; capped per month)
            [--source <https image url>] [--model <id>] [--async]
@@ -58,6 +61,7 @@ export async function runCli(argv: string[], deps: CliDeps): Promise<string> {
       async: { type: "boolean" },
       aspect: { type: "string" },
       "dry-run": { type: "boolean" },
+      max: { type: "string" },
     },
   });
   const [command, ...rest] = positionals;
@@ -101,6 +105,18 @@ export async function runCli(argv: string[], deps: CliDeps): Promise<string> {
       const withMetrics = posts.filter((p) => p.metrics).length;
       const head = `${values["dry-run"] ? "would import" : "imported"} ${posts.length} post(s) into ${channel} (${withMetrics} with metrics)`;
       return skipped.length ? `${head}; skipped ${skipped.length}:\n${skipped.slice(0, 20).map((s) => `  ${s.reason}`).join("\n")}${skipped.length > 20 ? `\n  …and ${skipped.length - 20} more` : ""}` : head;
+    }
+    case "drive-sync": {
+      const drive = buildDrive(deps.env, { fetch: deps.fetch, now: deps.now });
+      if (!drive) throw new Error("GOOGLE_SERVICE_ACCOUNT_JSON and DRIVE_FOLDER_ID must be set (see docs/LINKEDIN.md)");
+      const storage = buildStorage(deps.env, { fetch: deps.fetch });
+      if (!storage) throw new Error("SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set: Drive files are copied to public storage");
+      const maxNew = values.max ? Number(values.max) : undefined;
+      if (maxNew !== undefined && !(maxNew > 0)) throw new Error("--max must be a positive number");
+      const result = await syncDrive({ drive, store: new PostgresStore(deps.sql), storage, now: deps.now, maxNew });
+      const text = describeDriveSync(result);
+      if (result.failed.length && !result.added.length && !result.updated.length) throw new Error(text);
+      return text;
     }
     case "add-asset": {
       const [kind, uri] = rest;

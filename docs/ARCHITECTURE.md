@@ -31,7 +31,7 @@ One repository, `@daxegren/social-engine`, standalone:
 | Domain | `src/domain.ts` | Channels, assets (captured vs generated), posts, briefs, variants |
 | Channel rules | `src/channels.ts` | Per-channel limits and `validateVariant` |
 | Store | `src/store.ts`, `src/postgres-store.ts` | Persistence interface; in-memory and Postgres implementations (same contract tests) |
-| Adapters | `src/adapters/*` | One per channel: publish, ingest, metrics. Only place with platform specifics |
+| Adapters | `src/adapters/*` (direct per platform, or `buffer.ts` for everything Buffer connects) | One per channel: publish, ingest, metrics. Only place with platform specifics |
 | Analysis | `src/analyze.ts` | Engagement rate, best hours, length/media performance, time suggestion |
 | Generation | `src/generate.ts`, `src/claude.ts` | `ContentGenerator` on the official Anthropic SDK: Opus 5.5 with adaptive thinking, structured (JSON-schema) output, the server-side refusal fallback, and the creator's photos shown to the model |
 | Media | `src/media.ts`, `src/adapters/higgsfield.ts`, `src/adapters/gemini-image.ts`, `src/adapters/supabase-storage.ts` | Paid video (Higgsfield) and image (Gemini) generation as persisted jobs: estimate, monthly cap, submit, poll, copy to durable storage, register as an `Asset` |
@@ -72,6 +72,7 @@ One repository, `@daxegren/social-engine`, standalone:
 | Instagram | JPEG image, reel, carousel (2–20 images/videos; JPEG only, checked at approval) | yes (likes, comments) | likes, comments |
 | Facebook (Page) | text, photo(s), video | yes (reactions, comments, shares) | reactions, comments, shares |
 | LinkedIn | text, one image (flow checked against LinkedIn's docs 2026-11-06) | via `importPosts` | no |
+| Any channel, through Buffer | text, images, video (public URLs), as configured in `BUFFER_CHANNELS` | yes (sent posts, from Buffer) | yes (normalised: reactions, comments, impressions, reach, clicks, …) |
 | TikTok, Pinterest, YouTube, X, Snapchat | not yet — implement `ChannelAdapter` | | |
 
 Video generation is ported from the `content.generate.media` capability in Ecomduct CoPilot (Higgsfield) and checked

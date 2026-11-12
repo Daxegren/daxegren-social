@@ -17,6 +17,8 @@ jobs:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
       INSTAGRAM_USER_ID: ${{ secrets.INSTAGRAM_USER_ID }}
       INSTAGRAM_ACCESS_TOKEN: ${{ secrets.INSTAGRAM_ACCESS_TOKEN }}
+      BUFFER_API_KEY: ${{ secrets.BUFFER_API_KEY }}
+      BUFFER_CHANNELS: ${{ vars.BUFFER_CHANNELS }}
       FACEBOOK_PAGE_ID: ${{ secrets.FACEBOOK_PAGE_ID }}
       FACEBOOK_PAGE_ACCESS_TOKEN: ${{ secrets.FACEBOOK_PAGE_ACCESS_TOKEN }}
     steps:
@@ -33,3 +35,10 @@ jobs:
         run: |
           node dist/worker/main.js ingest facebook
           node dist/worker/main.js refresh-metrics facebook
+      - if: ${{ env.BUFFER_API_KEY != '' }}
+        run: |
+          for pair in $(echo "$BUFFER_CHANNELS" | tr ',' ' '); do
+            channel="${pair%%=*}"
+            node dist/worker/main.js ingest "$channel"
+            node dist/worker/main.js refresh-metrics "$channel"
+          done

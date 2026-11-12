@@ -6,6 +6,7 @@ import type { FetchLike } from "../adapters/types.js";
 import { PostgresStore, type SqlClient } from "../postgres-store.js";
 import { formatReport, runDoctor } from "./doctor.js";
 import { buildEngine, type Env } from "./env.js";
+import { listBufferChannels } from "../adapters/buffer-channels.js";
 import { parsePosts } from "./importer.js";
 import { migrate } from "./migrate.js";
 
@@ -13,6 +14,7 @@ export const USAGE = `usage: social <command>
 
   doctor                                    check the setup (free, read-only, never prints secrets)
   notify-test                               send a test notification to NOTIFY_URL
+  buffer-channels                           list your Buffer channels and ids (for BUFFER_CHANNELS)
   migrate                                   apply database migrations
   tick                                      publish everything that is due
   ingest <channel>                          read published posts from a channel
@@ -64,6 +66,10 @@ export async function runCli(argv: string[], deps: CliDeps): Promise<string> {
     const report = formatReport(checks);
     if (checks.some((c) => c.status === "fail")) throw new Error(report);
     return report;
+  }
+  if (command === "buffer-channels") {
+    if (!deps.env.BUFFER_API_KEY) throw new Error("BUFFER_API_KEY is not set (Buffer → Settings → API)");
+    return listBufferChannels({ apiKey: deps.env.BUFFER_API_KEY, fetch: deps.fetch });
   }
   if (command === "migrate") return `applied: ${JSON.stringify(await migrate(deps.sql))}`;
 

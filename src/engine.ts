@@ -317,14 +317,57 @@ export class ContentEngine {
   async refreshMetrics(channel: Channel): Promise<number> {
     const adapter = this.requireAdapter(channel);
     if (!adapter.capabilities.canMeasure) return 0;
+    const posts = await this.store.listPosts({ channel });
+    if (posts.length === 0) return 0;
+
+    // One or two requests for all posts where the adapter can (Buffer's free plan allows few requests), else one each.
+    const batch = adapter.fetchMetricsBatch ? await adapter.fetchMetricsBatch(posts.map((p) => p.externalId)) : undefined;
     let updated = 0;
-    for (const post of await this.store.listPosts({ channel })) {
-      const metrics = await adapter.fetchMetrics(post.externalId);
+    for (const post of posts) {
+      const metrics = batch ? batch.get(post.externalId) : await adapter.fetchMetrics(post.externalId);
       if (!metrics) continue;
       await this.store.upsertPost({ ...post, metrics });
       updated++;
     }
     return updated;
+  }
+
+  /**
+   * For adapters that hand posts to a service which publishes later (Buffer): finds out which posts went live, with
+   * their link, and which failed, with the reason. Only recent hand-overs are asked about, so a quiet account costs
+   * no requests.
+   */
+  async reconcileHandoffs(): Promise<{ sent: string[]; failed: string[] }> {
+    const result = { sent: [] as string[], failed: [] as string[] };
+    const cutoff = this.now().getTime() - 6 * 3_600_000;
+    const open = (await this.store.listVariants({ status: "published" })).filter(
+      (v) => !v.url && v.externalId && v.publishedAt && new Date(v.publishedAt).getTime() > cutoff,
+    );
+
+    for (const channel of new Set(open.map((v) => v.channel))) {
+      const adapter = this.adapters[channel];
+      if (!adapter?.reconcile) continue;
+      const mine = open.filter((v) => v.channel === channel);
+      let states: Awaited<ReturnType<NonNullable<ChannelAdapter["reconcile"]>>>;
+      try {
+        states = await adapter.reconcile(mine.map((v) => v.externalId!));
+      } catch {
+        continue; // try again next run; nothing is lost by asking later
+      }
+      for (const v of mine) {
+        const st = states.get(v.externalId!);
+        if (st?.state === "sent" && st.url) {
+          await this.store.putVariant({ ...v, url: st.url });
+          const post = (await this.store.listPosts({ channel })).find((p) => p.externalId === v.externalId);
+          if (post) await this.store.upsertPost({ ...post, url: st.url });
+          result.sent.push(v.id);
+        } else if (st?.state === "error") {
+          await this.store.putVariant({ ...v, status: "failed", lastError: `Buffer kunde inte publicera: ${st.error ?? "okänt fel"}` });
+          result.failed.push(v.id);
+        }
+      }
+    }
+    return result;
   }
 
   // ── 2. Analyse ────────────────────────────────────────────────────────
@@ -481,6 +524,8 @@ export class ContentEngine {
     this.notifyErrors = [];
     const recovered = await this.recoverStranded();
     const published = await runDue(this.store, this.adapters, this.now(), this.cfg.scheduler);
+    const reconciled = await this.reconcileHandoffs();
+    published.failed.push(...reconciled.failed);
     const requests = await this.processBriefRequests();
     const media = (this.cfg.videoGenerator || this.cfg.imageGenerator) && this.cfg.mediaStorage ? await this.advanceMedia() : undefined;
 

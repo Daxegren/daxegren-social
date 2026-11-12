@@ -17,6 +17,14 @@ export interface AdapterCapabilities {
 /** Ingested post before the engine assigns it an internal id. */
 export type RemotePost = Omit<PublishedPost, "id">;
 
+/** What became of a post that was handed to an intermediary (e.g. Buffer) which publishes asynchronously. */
+export interface HandoffState {
+  state: "pending" | "sent" | "error";
+  /** The live post, once sent. */
+  url?: string;
+  error?: string;
+}
+
 /**
  * One adapter per channel. Everything platform specific (auth, endpoints,
  * upload flows) lives behind this interface so the engine stays channel-agnostic.
@@ -27,6 +35,13 @@ export interface ChannelAdapter {
   fetchPublished(since?: Date): Promise<RemotePost[]>;
   publish(variant: PostVariant, assets: Asset[]): Promise<PublishResult>;
   fetchMetrics(externalId: string): Promise<Metrics | null>;
+  /** Metrics for many posts in as few requests as possible. Used instead of `fetchMetrics` when present. */
+  fetchMetricsBatch?(externalIds: string[]): Promise<Map<string, Metrics>>;
+  /**
+   * For adapters that hand posts to a service which publishes later: what became of them. Without it, a successful
+   * `publish` means the post is live.
+   */
+  reconcile?(externalIds: string[]): Promise<Map<string, HandoffState>>;
 }
 
 /**

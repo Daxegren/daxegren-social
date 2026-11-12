@@ -9,6 +9,7 @@ export * from "./notify.js";
 export * from "./scheduler.js";
 export * from "./engine.js";
 export * from "./adapters/types.js";
+export { BufferAdapter, bufferService, toMetrics as bufferMetrics, type BufferConfig } from "./adapters/buffer.js";
 export { FacebookAdapter, type FacebookConfig } from "./adapters/facebook.js";
 export { InstagramAdapter, type InstagramConfig } from "./adapters/instagram.js";
 export { LinkedInAdapter, type LinkedInConfig } from "./adapters/linkedin.js";

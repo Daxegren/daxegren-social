@@ -1,0 +1,19 @@
+name: List Buffer channels
+# Prints your Buffer organizations and channels with their ids, and the BUFFER_CHANNELS line to use.
+# Needs the secret BUFFER_API_KEY (Buffer → Settings → API).
+on:
+  workflow_dispatch:
+jobs:
+  channels:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npm run build
+      - run: node dist/worker/main.js buffer-channels
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          BUFFER_API_KEY: ${{ secrets.BUFFER_API_KEY }}

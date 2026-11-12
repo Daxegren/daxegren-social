@@ -4,8 +4,10 @@ import { DEFAULT_MONTHLY_CAP_USD, monthStartIso } from "../media.js";
 import Anthropic from "@anthropic-ai/sdk";
 import { DEFAULT_GEMINI_IMAGE_MODEL } from "../adapters/gemini-image.js";
 import { claudeClient, DEFAULT_CLAUDE_MODEL } from "../claude.js";
+import { loadBufferAccount } from "../adapters/buffer-channels.js";
+import { bufferService } from "../adapters/buffer.js";
 import { DEFAULT_LINKEDIN_VERSION } from "../adapters/linkedin.js";
-import { buildEngine, type Env } from "./env.js";
+import { buildEngine, parseBufferChannels, type Env } from "./env.js";
 import { migrationFiles } from "./migrate.js";
 
 export type CheckStatus = "ok" | "warn" | "fail" | "skip";
@@ -34,6 +36,12 @@ export function scrubSecrets(text: string, env: Env): string {
   }
   return out;
 }
+
+/** Direct (non-Buffer) credentials are present for the channel. */
+const directCredentials = (env: Env, channel: string) =>
+  (channel === "linkedin" && env.LINKEDIN_AUTHOR_URN && env.LINKEDIN_ACCESS_TOKEN) ||
+  (channel === "instagram" && env.INSTAGRAM_USER_ID && env.INSTAGRAM_ACCESS_TOKEN) ||
+  (channel === "facebook" && env.FACEBOOK_PAGE_ID && env.FACEBOOK_PAGE_ACCESS_TOKEN);
 
 const ok = (name: string, detail: string): Check => ({ name, status: "ok", detail });
 const warn = (name: string, detail: string): Check => ({ name, status: "warn", detail });
@@ -147,6 +155,27 @@ export async function runDoctor(deps: DoctorDeps): Promise<Check[]> {
     const body = (await res.json().catch(() => ({}))) as { username?: string; error?: { message?: string } };
     if (!res.ok) return fail("instagram", scrubSecrets(`HTTP ${res.status}: ${body.error?.message ?? "request failed"}`, env));
     return ok("instagram", `token works; account ${body.username ?? env.INSTAGRAM_USER_ID}`);
+  });
+
+  await run("buffer", async () => {
+    if (!env.BUFFER_API_KEY) return skip("buffer", "BUFFER_API_KEY not set (optional: Buffer can publish and report results for your channels)");
+    const wanted = parseBufferChannels(env);
+    const account = await loadBufferAccount({ apiKey: env.BUFFER_API_KEY, fetch: f });
+    const all = account.organizations.flatMap((o) => o.channels);
+    const out: Check[] = [ok("buffer", `key works; ${account.organizations.length} organization(s), ${all.length} channel(s)`)];
+    if (wanted.length === 0) {
+      return [...out, warn("buffer channels", "BUFFER_CHANNELS is not set, so Buffer is not used for publishing. Run buffer-channels to see ids")];
+    }
+    for (const [channel, id] of wanted) {
+      const found = all.find((c) => c.id === id);
+      const name = `buffer ${channel}`;
+      if (!found) out.push(fail(name, `channel id ${id} is not in your Buffer account. Run buffer-channels`));
+      else if (found.service !== bufferService(channel)) out.push(fail(name, `that id is a ${found.service} channel, not ${channel}`));
+      else if (found.isDisconnected) out.push(fail(name, `${found.displayName ?? found.name ?? id} is disconnected in Buffer: reconnect it there`));
+      else if (found.isLocked) out.push(fail(name, `${found.displayName ?? found.name ?? id} is locked (over the plan's channel limit)`));
+      else out.push(ok(name, `posts go to ${found.displayName ?? found.name ?? id} through Buffer${directCredentials(env, channel) ? " (replaces the direct credentials you also set)" : ""}`));
+    }
+    return out;
   });
 
   await run("facebook", async () => {

@@ -1,4 +1,5 @@
 import { GeminiImageGenerator } from "../adapters/gemini-image.js";
+import { BufferAdapter } from "../adapters/buffer.js";
 import { FacebookAdapter } from "../adapters/facebook.js";
 import { HiggsfieldVideoGenerator } from "../adapters/higgsfield.js";
 import { InstagramAdapter } from "../adapters/instagram.js";
@@ -12,6 +13,19 @@ import { WebhookNotifier, type Notifier, type WebhookFormat } from "../notify.js
 import type { Store } from "../store.js";
 
 export type Env = Record<string, string | undefined>;
+
+/** `linkedin=abc123,instagram=def456` (and the shorthand BUFFER_LINKEDIN_CHANNEL_ID) → channel/id pairs. */
+export function parseBufferChannels(env: Env): Array<[Channel, string]> {
+  const pairs = new Map<Channel, string>();
+  for (const part of (env.BUFFER_CHANNELS ?? "").split(",").map((x) => x.trim()).filter(Boolean)) {
+    const [name, id, ...rest] = part.split("=").map((x) => x.trim());
+    if (!name || !id || rest.length) throw new Error(`BUFFER_CHANNELS: expected channel=id, got "${part}"`);
+    if (!(CHANNELS as readonly string[]).includes(name)) throw new Error(`BUFFER_CHANNELS: unknown channel "${name}"`);
+    pairs.set(name as Channel, id);
+  }
+  if (env.BUFFER_LINKEDIN_CHANNEL_ID && !pairs.has("linkedin")) pairs.set("linkedin", env.BUFFER_LINKEDIN_CHANNEL_ID.trim());
+  return [...pairs];
+}
 
 export interface Wiring {
   engine: ContentEngine;
@@ -31,6 +45,13 @@ export function buildEngine(env: Env, store: Store, opts: { fetch?: FetchLike; n
   }
   if (env.LINKEDIN_AUTHOR_URN && env.LINKEDIN_ACCESS_TOKEN) {
     adapters.linkedin = new LinkedInAdapter({ authorUrn: env.LINKEDIN_AUTHOR_URN, accessToken: env.LINKEDIN_ACCESS_TOKEN, apiVersion: env.LINKEDIN_API_VERSION, fetch: opts.fetch });
+  }
+
+  // Buffer takes over the channels it is configured for: `BUFFER_CHANNELS=linkedin=<channel id>,instagram=<channel id>`.
+  if (env.BUFFER_API_KEY) {
+    for (const [channel, channelId] of parseBufferChannels(env)) {
+      adapters[channel] = new BufferAdapter({ apiKey: env.BUFFER_API_KEY, channelId, channel, fetch: opts.fetch });
+    }
   }
 
   const generator: ContentGenerator = env.ANTHROPIC_API_KEY

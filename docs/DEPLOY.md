@@ -55,7 +55,8 @@ Repository → Settings → Secrets and variables → Actions:
 | `DATABASE_URL` | everything (pooler connection string) |
 | `ANTHROPIC_API_KEY` | generating drafts |
 | `FACEBOOK_PAGE_ID`, `FACEBOOK_PAGE_ACCESS_TOKEN` | publishing to / learning from a Facebook Page. A **Page** access token with `pages_manage_posts` and `pages_read_engagement`; the same Meta app review as Instagram applies |
-| `LINKEDIN_AUTHOR_URN`, `LINKEDIN_ACCESS_TOKEN` | publishing to LinkedIn. Optional variable `LINKEDIN_API_VERSION` (`YYYYMM`): LinkedIn supports each monthly version for about a year, then rejects it. The built-in default is `202610`; **Check setup** warns when the version in use is getting old |
+| `BUFFER_API_KEY` | publishing through, and reading results from, [Buffer](https://buffer.com): a personal API key from Buffer → Settings → API. Together with the **variable** `BUFFER_CHANNELS` (`linkedin=<channel id>`; run **List Buffer channels** to see the ids). Buffer then takes over those channels, even if direct credentials are set |
+| `LINKEDIN_AUTHOR_URN`, `LINKEDIN_ACCESS_TOKEN` | publishing to LinkedIn directly, without Buffer. Optional variable `LINKEDIN_API_VERSION` (`YYYYMM`): LinkedIn supports each monthly version for about a year, then rejects it. The built-in default is `202610`; **Check setup** warns when the version in use is getting old |
 | `INSTAGRAM_USER_ID`, `INSTAGRAM_ACCESS_TOKEN` | publishing to / learning from Instagram |
 | `HIGGSFIELD_API_KEY` (`KEY_ID:KEY_SECRET`) | generating video |
 | `GEMINI_API_KEY` | generating images. A key from **Google AI Studio** on a **billed** project — Google's pricing page lists image generation as not available on the free tier, and a consumer Gemini subscription is not an API key |
@@ -106,5 +107,12 @@ posts are published by the next tick.
   **Försök igen** on the *Misslyckade* tab. An abandoned request is marked failed the same way (order it again).
 - **Public repo.** Code and docs are public. Secrets live only in Actions secrets and are not exposed to
   workflows triggered from forks. Never commit tokens or `.env` files.
+- **Buffer hands over, then publishes.** A post is given to Buffer when its time comes, and Buffer sends it a moment later.
+  The next run checks what became of it: the link is filled in when it is live, and if Buffer could not publish it you are
+  told and it moves to *Misslyckade*. Buffer reports performance about once a day, so results lag by up to a day.
+  Media must be a public https address that stays up (our storage bucket qualifies; a Drive share link does not).
+  Buffer's free plan allows roughly 1,000 requests per channel per 30 days, so the engine reads history and results in
+  batches and only asks about hand-overs from the last six hours. Buffer only knows posts that went through Buffer: older
+  LinkedIn posts need the CSV import (docs/IMPORT.md).
 - **Platform access.** Instagram and Facebook publishing need a business/creator account / a Page and Meta app review; LinkedIn
   needs the Posts API product. Neither is something this repo can do for you.

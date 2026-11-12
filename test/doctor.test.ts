@@ -69,7 +69,7 @@ describe("doctor", () => {
     const good = await runDoctor({
       env, sql,
       fetch: mockFetch([
-        { match: (u) => u.includes("api.anthropic.com"), reply: () => json({ data: [{ id: "claude-sonnet-5-5" }] }) },
+        { match: (u) => u.includes("api.anthropic.com"), reply: () => json({ data: [{ id: "claude-opus-5-5" }] }) },
         { match: (u) => u.includes("graph.facebook.com"), reply: () => json({ id: "178", username: "david" }) },
       ]).fn,
     });

@@ -124,3 +124,10 @@ export class FakeImageGenerator implements ImageGenerator {
     return { bytes: new Uint8Array([137, 80, 78, 71]), mimeType: "image/png" };
   }
 }
+
+/** A Messages API response with one text block, in the shape the SDK expects. */
+export const claudeMessage = (text: string, over: Record<string, unknown> = {}) =>
+  json({ id: "msg_test", type: "message", role: "assistant", model: "claude-opus-5-5", content: [{ type: "text", text }], stop_reason: "end_turn", stop_sequence: null, usage: { input_tokens: 1, output_tokens: 1 }, ...over });
+
+/** Matches the Messages endpoint, with or without the `?beta=true` the SDK adds for beta features. */
+export const isClaude = (url: string) => url.startsWith("https://api.anthropic.com/v1/messages");

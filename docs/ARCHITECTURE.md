@@ -16,8 +16,8 @@ measurements feed the next round of analysis.
 
 One repository, `@daxegren/social-engine`, standalone:
 
-- `src/` — the engine: a framework-free TypeScript library (global `fetch` and `crypto`, no runtime
-  dependencies; `pg` is only used by the worker).
+- `src/` — the engine: a framework-free TypeScript library. Its runtime dependencies are the official Anthropic SDK
+  (all Claude calls go through it) and `pg` (the worker only); everything else uses the global `fetch` and `crypto`.
 - `src/worker/` — the command line the automation runs: `doctor`, `migrate`, `tick`, `ingest`, `import`, `refresh-metrics`, `add-asset`, `media`, `generate`.
 - `web/` — the review queue: a static React app that talks to Supabase directly and imports the channel
   rules from `src/`, so it validates with exactly the rules the scheduler enforces.
@@ -33,7 +33,7 @@ One repository, `@daxegren/social-engine`, standalone:
 | Store | `src/store.ts`, `src/postgres-store.ts` | Persistence interface; in-memory and Postgres implementations (same contract tests) |
 | Adapters | `src/adapters/*` | One per channel: publish, ingest, metrics. Only place with platform specifics |
 | Analysis | `src/analyze.ts` | Engagement rate, best hours, length/media performance, time suggestion |
-| Generation | `src/generate.ts` | `ContentGenerator` (Claude implementation) |
+| Generation | `src/generate.ts`, `src/claude.ts` | `ContentGenerator` on the official Anthropic SDK: Opus 5.5 with adaptive thinking, structured (JSON-schema) output, the server-side refusal fallback, and the creator's photos shown to the model |
 | Media | `src/media.ts`, `src/adapters/higgsfield.ts`, `src/adapters/gemini-image.ts`, `src/adapters/supabase-storage.ts` | Paid video (Higgsfield) and image (Gemini) generation as persisted jobs: estimate, monthly cap, submit, poll, copy to durable storage, register as an `Asset` |
 | Scheduler | `src/scheduler.ts` | Claims due variants atomically, validates, publishes, retries with backoff |
 | Engine | `src/engine.ts` | Orchestrates everything above |

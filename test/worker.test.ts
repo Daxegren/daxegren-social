@@ -3,7 +3,7 @@ import { MemoryStore } from "../src/store.js";
 import { runCli } from "../src/worker/cli.js";
 import { buildEngine } from "../src/worker/env.js";
 import { migrate } from "../src/worker/migrate.js";
-import { json, mockFetch } from "./helpers.js";
+import { claudeMessage, isClaude, json, mockFetch } from "./helpers.js";
 import { bareDb, freshDb } from "./pg.js";
 
 describe("buildEngine", () => {
@@ -50,8 +50,8 @@ describe("cli: generate → review in the database → tick", () => {
     const { sql } = await freshDb();
     const { fn, calls } = mockFetch([
       {
-        match: (u) => u === "https://api.anthropic.com/v1/messages",
-        reply: () => json({ content: [{ type: "text", text: '{"variants":[{"channel":"linkedin","text":"Hej från motorn","assetIds":[],"rationale":"test"}]}' }] }),
+        match: isClaude,
+        reply: () => claudeMessage('{"variants":[{"channel":"linkedin","text":"Hej från motorn","assetIds":[],"rationale":"test"}]}'),
       },
       {
         match: (u) => u.endsWith("/rest/posts"),
@@ -82,7 +82,7 @@ describe("cli: generate → review in the database → tick", () => {
   it("uses the configured channels when --channels is omitted", async () => {
     const { sql } = await freshDb();
     const { fn } = mockFetch([
-      { match: () => true, reply: () => json({ content: [{ type: "text", text: '{"variants":[{"channel":"linkedin","text":"x"}]}' }] }) },
+      { match: () => true, reply: () => claudeMessage('{"variants":[{"channel":"linkedin","text":"x"}]}') },
     ]);
     const out = await runCli(["generate", "idé"], { env: { ANTHROPIC_API_KEY: "k", LINKEDIN_AUTHOR_URN: "u", LINKEDIN_ACCESS_TOKEN: "t" }, sql, fetch: fn });
     expect(out).toMatch(/^linkedin\tdraft\t/);
@@ -125,13 +125,14 @@ describe("cli: own and generated media into drafts", () => {
     // The draft references both assets; the fake model answers with them.
     const reply = JSON.stringify({ variants: [{ channel: "instagram", text: "Se klippet", assetIds: [videoId] }] });
     const patched = mockFetch([
-      { match: (u) => u === "https://api.anthropic.com/v1/messages", reply: () => json({ content: [{ type: "text", text: reply }] }) },
+      { match: isClaude, reply: () => claudeMessage(reply) },
     ]);
     const out = await runCli(["generate", "ny produkt", "--channels", "instagram", "--assets", `${photoId},${videoId}`], { ...deps, fetch: patched.fn });
     expect(out).toMatch(/^instagram\tdraft\t/);
-    const prompt = JSON.parse(String(patched.calls[0]!.init!.body)).messages[0].content as string;
+    const blocks = JSON.parse(String(patched.calls[0]!.init!.body)).messages[0].content as Array<{ type: string; text?: string }>;
+    const prompt = blocks[0]!.text!;
     expect(prompt).toContain(videoId);
-    expect(prompt).toContain('"origin":"generated"');
+    expect(prompt).toContain(`${videoId}: video, generated`);
     expect(calls.some((c) => c.url.includes("/estimate/"))).toBe(true);
 
     const [draft] = await sql.query<{ asset_ids: string[] }>(`select asset_ids from social_variants`);

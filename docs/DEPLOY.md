@@ -8,7 +8,7 @@ pricing and limits on each provider's site before relying on this**; they change
 | Database + login | Supabase | `social_*` tables, sign-in for the review queue | Free tier; projects on it pause when inactive (the 15-minute tick keeps it awake) |
 | Review queue | Cloudflare Pages (or Netlify, Vercel, GitHub Pages) | Static site from `web/` | Static hosting |
 | Worker | GitHub Actions | `tick` every 15 min, daily learn, manual "Generate drafts" | Free for public repos. Private repos have a monthly minute quota; 15-minute ticks would exceed the free quota, so use ~30–60 min or keep the repo public |
-| Content generation | Anthropic API | Drafts | Per token |
+| Content generation | Anthropic API | Drafts, written by `claude-opus-5-5` (override with the variable `CLAUDE_MODEL`). It looks at your photos when it writes. | Per token: Opus 5.5 is priced at about 4 USD in / 20 USD out per million tokens at the time of writing, roughly twice a Sonnet; a handful of posts a day is cents |
 | Video generation | Higgsfield | Clips from a product image or a text prompt | Per clip — roughly 0.07–0.30 USD each according to the notes in Ecomduct CoPilot; capped per month (below) |
 | Image generation | Google Gemini API | Images from a prompt, optionally based on a reference photo | Per image (estimate 0.04 USD, configurable); shares the monthly cap with video |
 | Generated files | Supabase Storage | Durable public URLs the platforms fetch media from | Storage quota |

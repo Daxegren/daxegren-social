@@ -1,7 +1,9 @@
 import type { FetchLike } from "../adapters/types.js";
 import { PostgresStore, type SqlClient } from "../postgres-store.js";
 import { DEFAULT_MONTHLY_CAP_USD, monthStartIso } from "../media.js";
+import Anthropic from "@anthropic-ai/sdk";
 import { DEFAULT_GEMINI_IMAGE_MODEL } from "../adapters/gemini-image.js";
+import { claudeClient, DEFAULT_CLAUDE_MODEL } from "../claude.js";
 import { DEFAULT_LINKEDIN_VERSION } from "../adapters/linkedin.js";
 import { buildEngine, type Env } from "./env.js";
 import { migrationFiles } from "./migrate.js";
@@ -111,11 +113,15 @@ export async function runDoctor(deps: DoctorDeps): Promise<Check[]> {
 
   await run("anthropic", async () => {
     if (!env.ANTHROPIC_API_KEY) return skip("anthropic", "ANTHROPIC_API_KEY not set (needed to generate drafts)");
-    const res = await f("https://api.anthropic.com/v1/models?limit=100", { headers: { "x-api-key": env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" } });
-    if (res.status === 401 || res.status === 403) return fail("anthropic", `key rejected (HTTP ${res.status})`);
-    if (!res.ok) return fail("anthropic", `HTTP ${res.status}`);
-    const ids = ((await res.json()) as { data?: Array<{ id: string }> }).data?.map((m) => m.id) ?? [];
-    const model = env.CLAUDE_MODEL ?? "claude-sonnet-5-5";
+    const client = claudeClient({ apiKey: env.ANTHROPIC_API_KEY, fetch: f, maxRetries: 0 });
+    let ids: string[];
+    try {
+      ids = (await client.models.list({ limit: 100 })).data.map((m) => m.id);
+    } catch (err) {
+      if (err instanceof Anthropic.APIError && (err.status === 401 || err.status === 403)) return fail("anthropic", `key rejected (HTTP ${err.status})`);
+      throw err;
+    }
+    const model = env.CLAUDE_MODEL ?? DEFAULT_CLAUDE_MODEL;
     return ids.length && !ids.includes(model) ? warn("anthropic", `key works, but model "${model}" is not in the list. Set CLAUDE_MODEL`) : ok("anthropic", `key works; model ${model}`);
   });
 

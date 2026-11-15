@@ -21,6 +21,8 @@ export function CreateView({ api }: { api: CreateApi }) {
   const [angle, setAngle] = useState("");
   const [goal, setGoal] = useState("");
   const [channels, setChannels] = useState<Set<Channel>>(new Set());
+  const [format, setFormat] = useState<"post" | "carousel">("post");
+  const [keyword, setKeyword] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [notice, setNotice] = useState<Notice>();
   const [requests, setRequests] = useState<ContentBrief[]>([]);
@@ -72,7 +74,8 @@ export function CreateView({ api }: { api: CreateApi }) {
     if (fileInput.current) fileInput.current.value = "";
   }
 
-  const ready = idea.trim().length >= 5 && channels.size > 0 && uploading === 0 && !submitting;
+  const keywordOk = /^[A-Za-z0-9ÅÄÖåäö]{0,30}$/.test(keyword.trim());
+  const ready = idea.trim().length >= 5 && channels.size > 0 && uploading === 0 && !submitting && keywordOk;
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -86,8 +89,11 @@ export function CreateView({ api }: { api: CreateApi }) {
         goal: goal.trim() || undefined,
         channels: CHANNELS.filter((c) => channels.has(c)),
         assetIds: [...selected],
+        format,
+        ctaKeyword: format === "carousel" ? keyword.trim() || undefined : undefined,
       });
       setIdea("");
+      setKeyword("");
       setAngle("");
       setGoal("");
       setSelected(new Set());
@@ -160,7 +166,27 @@ export function CreateView({ api }: { api: CreateApi }) {
         </div>
 
         <fieldset>
-          <legend className="text-sm font-medium text-slate-700">3. Kanaler</legend>
+          <legend className="text-sm font-medium text-slate-700">3. Format</legend>
+          <div className="mt-2 flex gap-2">
+            {([["post", "Inlägg"], ["carousel", "Karusell"]] as const).map(([value, label]) => (
+              <label key={value} className={`cursor-pointer rounded border px-3 py-2 text-sm ${format === value ? "border-slate-900 bg-slate-900 text-white" : "border-slate-300 bg-white text-slate-700"}`}>
+                <input type="radio" name="format" className="sr-only" checked={format === value} onChange={() => setFormat(value)} />
+                {label}
+              </label>
+            ))}
+          </div>
+          {format === "carousel" && (
+            <div className="mt-3">
+              <p className="text-xs text-slate-500">Svepbara sidor med text. Fungerar på Instagram, LinkedIn, Facebook och X. Ditt första foto blir bakgrund på omslaget.</p>
+              <label htmlFor="keyword" className="mt-2 block text-sm text-slate-600">Ord att kommentera på sista sidan (valfritt)</label>
+              <input id="keyword" className={input} maxLength={30} value={keyword} onChange={(e) => setKeyword(e.target.value)} placeholder="Till exempel: MALL" />
+              {!keywordOk && <p role="alert" className="mt-1 text-xs text-red-600">Bara bokstäver och siffror, utan mellanslag.</p>}
+            </div>
+          )}
+        </fieldset>
+
+        <fieldset>
+          <legend className="text-sm font-medium text-slate-700">4. Kanaler</legend>
           <div className="mt-2 flex flex-wrap gap-2">
             {CHANNELS.map((c) => (
               <label key={c} className={`cursor-pointer rounded border px-3 py-2 text-sm ${channels.has(c) ? "border-slate-900 bg-slate-900 text-white" : "border-slate-300 bg-white text-slate-700"}`}>
@@ -186,7 +212,7 @@ export function CreateView({ api }: { api: CreateApi }) {
           <ul className="divide-y divide-slate-200 rounded-lg border border-slate-200 bg-white">
             {requests.map((r) => (
               <li key={r.id} className="p-3 text-sm">
-                <p className="line-clamp-2 text-slate-800">{r.idea}</p>
+                <p className="line-clamp-2 text-slate-800">{r.format === "carousel" ? "Karusell: " : ""}{r.idea}</p>
                 <p className="mt-1 text-xs text-slate-500">
                   {(r.channels ?? []).map((c) => CHANNEL_LABELS[c] ?? c).join(", ")} · {formatWhen(r.createdAt)}
                 </p>

@@ -7,6 +7,10 @@ import { PostgresStore, type SqlClient } from "../postgres-store.js";
 import { formatReport, runDoctor } from "./doctor.js";
 import { buildDrive, buildEngine, buildStorage, type Env } from "./env.js";
 import { describeDriveSync, syncDrive } from "../drive-sync.js";
+import { brandFromEnv, buildCarousel } from "../carousel/build.js";
+import { ClaudeCarouselWriter, DEFAULT_SLIDES, MAX_SLIDES, MIN_SLIDES } from "../carousel/write.js";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { listBufferChannels } from "../adapters/buffer-channels.js";
 import { parsePosts } from "./importer.js";
 import { migrate } from "./migrate.js";
@@ -24,6 +28,9 @@ export const USAGE = `usage: social <command>
            [--dry-run]
   drive-sync                                copy new photos/videos from your Drive folder into storage (no cost)
            [--max <n>]
+  carousel "<idea>" --channels a,b         write a carousel (pages drawn as images) and draft one variant per channel
+           [--slides 4-12] [--keyword <word>] [--assets id,id]
+           [--preview <dir>]                 only draw the pages into <dir> (no database, no storage)
   add-asset <image|video> <https-url>       register a photo or video you made yourself; prints its id
   media video "<prompt>"                    generate a video (costs money; capped per month)
            [--source <https image url>] [--model <id>] [--async]
@@ -46,6 +53,13 @@ function channelArg(v: string | undefined): Channel {
   return v as Channel;
 }
 
+function slidesArg(v: string | undefined): number {
+  if (v === undefined) return DEFAULT_SLIDES;
+  const n = Number(v);
+  if (!Number.isInteger(n) || n < MIN_SLIDES || n > MAX_SLIDES) throw new Error(`--slides must be a whole number from ${MIN_SLIDES} to ${MAX_SLIDES}`);
+  return n;
+}
+
 /** Runs one command and returns what to print. Throws on failure. */
 export async function runCli(argv: string[], deps: CliDeps): Promise<string> {
   const { values, positionals } = parseArgs({
@@ -62,6 +76,9 @@ export async function runCli(argv: string[], deps: CliDeps): Promise<string> {
       aspect: { type: "string" },
       "dry-run": { type: "boolean" },
       max: { type: "string" },
+      slides: { type: "string" },
+      keyword: { type: "string" },
+      preview: { type: "string" },
     },
   });
   const [command, ...rest] = positionals;
@@ -76,6 +93,25 @@ export async function runCli(argv: string[], deps: CliDeps): Promise<string> {
     return listBufferChannels({ apiKey: deps.env.BUFFER_API_KEY, fetch: deps.fetch });
   }
   if (command === "migrate") return `applied: ${JSON.stringify(await migrate(deps.sql))}`;
+
+  if (command === "carousel" && values.preview) {
+    // Draws the pages locally so the look and the writing can be judged before anything is stored or posted.
+    if (!deps.env.ANTHROPIC_API_KEY) throw new Error("ANTHROPIC_API_KEY is not set");
+    const idea = rest[0];
+    if (!idea) throw new Error('usage: carousel "<idea>" --channels linkedin --preview <dir>');
+    const channels = (values.channels ?? "linkedin").split(",").filter(Boolean).map(channelArg);
+    const slideCount = slidesArg(values.slides);
+    const built = await buildCarousel({
+      writer: new ClaudeCarouselWriter({ apiKey: deps.env.ANTHROPIC_API_KEY, model: deps.env.CLAUDE_MODEL, fetch: deps.fetch }),
+      input: { brief: { id: "preview", idea, sourcePostIds: [], assetIds: [], createdAt: new Date().toISOString() }, channels, insights: {}, examples: [], assets: [], slideCount, keyword: values.keyword },
+      brand: brandFromEnv(deps.env),
+      fetch: deps.fetch,
+    });
+    mkdirSync(values.preview, { recursive: true });
+    built.images.forEach((img, i) => writeFileSync(join(values.preview!, `page-${String(i + 1).padStart(2, "0")}.jpg`), img));
+    writeFileSync(join(values.preview, "captions.txt"), built.captions.map((c) => `[${c.channel}]\n${c.text}`).join("\n\n---\n\n"));
+    return `${built.images.length} pages and ${built.captions.length} caption(s) written to ${values.preview}`;
+  }
 
   const { engine, configuredChannels, notifier } = buildEngine(deps.env, new PostgresStore(deps.sql), { fetch: deps.fetch, now: deps.now, sleep: deps.sleep });
 
@@ -117,6 +153,16 @@ export async function runCli(argv: string[], deps: CliDeps): Promise<string> {
       const text = describeDriveSync(result);
       if (result.failed.length && !result.added.length && !result.updated.length) throw new Error(text);
       return text;
+    }
+    case "carousel": {
+      const idea = rest[0];
+      if (!idea) throw new Error('carousel needs an idea: social carousel "<idea>" --channels linkedin,instagram');
+      const channels = (values.channels ?? configuredChannels.join(",")).split(",").filter(Boolean).map(channelArg);
+      if (channels.length === 0) throw new Error("no channels given and none configured");
+      const assetIds = (values.assets ?? "").split(",").filter(Boolean);
+      const brief = await engine.createBrief({ idea, assetIds, format: "carousel", ctaKeyword: values.keyword });
+      const drafts = await engine.createCarousel(brief.id, channels, { slideCount: slidesArg(values.slides), keyword: values.keyword });
+      return drafts.map((d) => `${d.channel}\t${d.status}\t${d.id}\t${d.assetIds.length} pages`).join("\n");
     }
     case "add-asset": {
       const [kind, uri] = rest;

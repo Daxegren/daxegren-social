@@ -60,7 +60,9 @@ Repository → Settings → Secrets and variables → Actions:
 | `INSTAGRAM_USER_ID`, `INSTAGRAM_ACCESS_TOKEN` | publishing to / learning from Instagram |
 | `HIGGSFIELD_API_KEY` (`KEY_ID:KEY_SECRET`) | generating video |
 | `GEMINI_API_KEY` | generating images. A key from **Google AI Studio** on a **billed** project — Google's pricing page lists image generation as not available on the free tier, and a consumer Gemini subscription is not an API key |
-| `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | storing generated video. **Service-role key: Actions secret only, never in the browser** |
+| `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | storing generated video, Drive photos and carousel pages. **Service-role key: Actions secret only, never in the browser** |
+
+Optional **carousel look** variables: `CAROUSEL_HANDLE` (e.g. `@david`, printed on every page), `CAROUSEL_ACCENT` (`#rrggbb`, default `#4F8CFF`) and `CAROUSEL_THEME` (`dark` or `light`). See [CAROUSELS.md](CAROUSELS.md). Carousels also need `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` (the pages are stored as public images).
 
 Optional variables `GEMINI_IMAGE_MODEL` (default `gemini-nano-banana-2.1`, Google's recommended image model; `gemini-2.5-flash-image` is marked legacy), `GEMINI_IMAGE_COST_USD` (default 0.04; Google's published price for a 1K image is 0.0336 plus input tokens) and `GEMINI_API_REVISION` (default `2026-05-20`, a header the Interactions API asks for) — check Google's current docs. Optional **notifications** to your phone: set the secret `NOTIFY_URL` and the variable `APP_URL` (the review app's address,
 so a tap opens it). The simplest way is [ntfy](https://ntfy.sh): install the ntfy app, subscribe to a long random

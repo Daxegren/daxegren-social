@@ -1,0 +1,46 @@
+name: Create carousel
+# Fill in the form under Actions → "Create carousel" → Run workflow (works from the GitHub app on a phone).
+# Writes a carousel (swipeable pages of text, drawn as images) plus a caption per channel; it then waits in the review queue.
+on:
+  workflow_dispatch:
+    inputs:
+      idea: { description: "What should the carousel be about?", required: true }
+      channels: { description: "Comma separated, e.g. linkedin,instagram", required: true, default: "linkedin,instagram" }
+      slides: { description: "Number of pages, 4 to 12", required: false, default: "8" }
+      keyword: { description: "Word readers comment on the last page (optional)", required: false }
+      assets: { description: "Asset ids of your own photos, comma separated (optional; the first becomes the cover background)", required: false }
+concurrency:
+  group: social-worker
+  cancel-in-progress: false
+jobs:
+  carousel:
+    if: ${{ vars.SOCIAL_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npm run build
+      # Inputs go through env vars, never interpolated into the shell command.
+      - run: node dist/worker/main.js carousel "$IDEA" --channels "$CHANNELS" --slides "${SLIDES:-8}" ${KEYWORD:+--keyword "$KEYWORD"} ${ASSETS:+--assets "$ASSETS"}
+        env:
+          IDEA: ${{ inputs.idea }}
+          CHANNELS: ${{ inputs.channels }}
+          SLIDES: ${{ inputs.slides }}
+          KEYWORD: ${{ inputs.keyword }}
+          ASSETS: ${{ inputs.assets }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_MODEL: ${{ vars.CLAUDE_MODEL }}
+          CAROUSEL_HANDLE: ${{ vars.CAROUSEL_HANDLE }}
+          CAROUSEL_ACCENT: ${{ vars.CAROUSEL_ACCENT }}
+          CAROUSEL_THEME: ${{ vars.CAROUSEL_THEME }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SOCIAL_MEDIA_BUCKET: ${{ vars.SOCIAL_MEDIA_BUCKET }}
+          INSTAGRAM_USER_ID: ${{ secrets.INSTAGRAM_USER_ID }}
+          INSTAGRAM_ACCESS_TOKEN: ${{ secrets.INSTAGRAM_ACCESS_TOKEN }}
+          LINKEDIN_AUTHOR_URN: ${{ secrets.LINKEDIN_AUTHOR_URN }}
+          LINKEDIN_ACCESS_TOKEN: ${{ secrets.LINKEDIN_ACCESS_TOKEN }}

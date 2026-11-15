@@ -46,6 +46,24 @@ describe("CreateView", () => {
     expect(submit()).toBeDisabled(); // no channel
   });
 
+  it("orders a carousel with a comment keyword, and rejects a keyword with spaces", async () => {
+    const user = userEvent.setup();
+    const api = fakeApi();
+    render(<CreateView api={api} />);
+    await user.type(screen.getByLabelText(/Vad ska inlägget/), "Tre saker om marginal");
+    await user.click(screen.getByLabelText("LinkedIn"));
+    expect(screen.queryByLabelText(/Ord att kommentera/)).not.toBeInTheDocument();
+    await user.click(screen.getByLabelText("Karusell"));
+    await user.type(screen.getByLabelText(/Ord att kommentera/), "två ord");
+    expect(screen.getByRole("alert")).toHaveTextContent("Bara bokstäver");
+    expect(submit()).toBeDisabled();
+    await user.clear(screen.getByLabelText(/Ord att kommentera/));
+    await user.type(screen.getByLabelText(/Ord att kommentera/), "MALL");
+    await user.click(submit());
+    await waitFor(() => expect(api.requestDrafts).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(api.requestDrafts).mock.calls[0]![0]).toMatchObject({ format: "carousel", ctaKeyword: "MALL", channels: ["linkedin"] });
+  });
+
   it("sends idea, optional fields, channels in a stable order and the selected assets, then resets and confirms", async () => {
     const user = userEvent.setup();
     const mine = asset({ id: "a1" });
@@ -63,7 +81,7 @@ describe("CreateView", () => {
     await user.click(submit());
 
     await waitFor(() => expect(api.requestDrafts).toHaveBeenCalledTimes(1));
-    expect(api.requestDrafts).toHaveBeenCalledWith({ idea: "Tre lärdomar från veckan", angle: "ärligt", goal: undefined, channels: ["instagram", "linkedin"], assetIds: ["a1"] });
+    expect(api.requestDrafts).toHaveBeenCalledWith({ idea: "Tre lärdomar från veckan", angle: "ärligt", goal: undefined, channels: ["instagram", "linkedin"], assetIds: ["a1"], format: "post", ctaKeyword: undefined });
     expect(await screen.findByRole("status")).toHaveTextContent("Beställt");
     expect(screen.getByLabelText(/Vad ska inlägget/)).toHaveValue("");
     expect(await screen.findByText("Tre lärdomar från veckan")).toBeInTheDocument(); // appears in the order list

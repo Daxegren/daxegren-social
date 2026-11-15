@@ -1,8 +1,11 @@
 import { analyzeChannel, suggestTime, type ChannelInsights } from "./analyze.js";
-import { CHANNEL_LABELS, validateVariant } from "./channels.js";
+import { CHANNEL_LABELS, CHANNEL_SPECS, validateVariant } from "./channels.js";
+import { buildCarousel } from "./carousel/build.js";
+import type { Brand } from "./carousel/render.js";
+import { DEFAULT_SLIDES, MAX_SLIDES, MIN_SLIDES, type CarouselWriter } from "./carousel/write.js";
 import type { Asset, AssetKind, Channel, ContentBrief, MediaJob, PostVariant, PublishedPost } from "./domain.js";
 import { AdapterError, NotSupportedError, type ChannelAdapter, type FetchLike, type RemotePost } from "./adapters/types.js";
-import type { ContentGenerator } from "./generate.js";
+import type { ContentGenerator, GeneratedVariant } from "./generate.js";
 import {
   buildImagePrompt,
   buildVideoPrompt,
@@ -31,6 +34,10 @@ export interface EngineConfig {
   mediaStorage?: MediaStorage;
   /** Paid image generation (synchronous). Also needs `mediaStorage`. */
   imageGenerator?: ImageGenerator;
+  /** Writes carousels. Needs `mediaStorage` as well: the pages are drawn here and stored as public images. */
+  carouselWriter?: CarouselWriter;
+  /** Colours and handle drawn on carousel pages. */
+  brand?: Brand;
   /** Pause between safe retries of a video submission. Injectable for tests. */
   sleep?: (ms: number) => Promise<void>;
   /** Monthly spend limit for media generation, in USD. Default 50. */
@@ -385,6 +392,8 @@ export class ContentEngine {
     goal?: string;
     sourcePostIds?: string[];
     assetIds?: string[];
+    format?: ContentBrief["format"];
+    ctaKeyword?: string;
   }): Promise<ContentBrief> {
     const brief: ContentBrief = {
       id: crypto.randomUUID(),
@@ -393,6 +402,8 @@ export class ContentEngine {
       goal: input.goal,
       sourcePostIds: input.sourcePostIds ?? [],
       assetIds: input.assetIds ?? [],
+      format: input.format,
+      ctaKeyword: input.ctaKeyword,
       status: "ready",
       createdAt: this.now().toISOString(),
     };
@@ -409,7 +420,11 @@ export class ContentEngine {
     const examples = await this.pickExamples(brief, insights);
 
     const generated = await this.cfg.generator.generate({ brief, channels, insights, examples, assets });
+    return this.saveDrafts(briefId, generated, insights);
+  }
 
+  /** Stores generated variants as drafts, or schedules them right away for channels in `autoApprove` when they are valid. */
+  private async saveDrafts(briefId: string, generated: GeneratedVariant[], insights: Partial<Record<Channel, ChannelInsights>>): Promise<PostVariant[]> {
     const now = this.now();
     const out: PostVariant[] = [];
     for (const g of generated) {
@@ -437,6 +452,51 @@ export class ContentEngine {
       out.push(variant);
     }
     return out;
+  }
+
+  /**
+   * Writes a carousel for the brief, draws every page as a JPEG, stores the pages as public images and drafts one
+   * variant per channel (the caption plus the pages). Only channels that take at least four images are used.
+   */
+  async createCarousel(briefId: string, channels: Channel[], opts: { slideCount?: number; keyword?: string } = {}): Promise<PostVariant[]> {
+    const writer = this.cfg.carouselWriter;
+    if (!writer) throw new Error("no carousel writer is configured (ANTHROPIC_API_KEY is needed)");
+    const storage = this.cfg.mediaStorage;
+    if (!storage) throw new Error("carousels need public storage (SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY)");
+    const brief = await this.store.getBrief(briefId);
+    if (!brief) throw new Error(`unknown brief ${briefId}`);
+
+    const usable = channels.filter((c) => CHANNEL_SPECS[c].media.includes("image") && CHANNEL_SPECS[c].maxAssets >= MIN_SLIDES);
+    if (usable.length === 0) throw new Error(`a carousel needs a channel that takes at least ${MIN_SLIDES} images; ${channels.map((c) => CHANNEL_LABELS[c]).join(", ")} does not`);
+    const cap = Math.min(MAX_SLIDES, ...usable.map((c) => CHANNEL_SPECS[c].maxAssets));
+    const slideCount = Math.max(MIN_SLIDES, Math.min(opts.slideCount ?? DEFAULT_SLIDES, cap));
+
+    const [insights, assets] = await Promise.all([this.analyze(usable), this.store.getAssets(brief.assetIds)]);
+    const examples = await this.pickExamples(brief, insights);
+    const built = await buildCarousel({
+      writer,
+      input: { brief, channels: usable, insights, examples, assets, slideCount, keyword: opts.keyword ?? brief.ctaKeyword },
+      brand: this.cfg.brand,
+      fetch: this.cfg.fetch,
+    });
+
+    const run = crypto.randomUUID().slice(0, 8);
+    const pageIds: string[] = [];
+    for (let i = 0; i < built.images.length; i++) {
+      const slide = built.slides[i]!;
+      const uri = await storage.put(`carousels/${briefId}/${run}-${i + 1}.jpg`, built.images[i]!, "image/jpeg");
+      const asset = await this.saveAsset("image", "generated", uri, { source: "carousel", briefId, page: i + 1, kind: slide.kind, title: slide.title });
+      pageIds.push(asset.id);
+    }
+
+    const rationale = [`Karusell, ${pageIds.length} sidor`, ...built.notes].join(". ");
+    const generated = usable.map<GeneratedVariant>((channel) => ({
+      channel,
+      text: built.captions.find((c) => c.channel === channel)?.text ?? built.slides[0]!.title,
+      assetIds: pageIds,
+      rationale,
+    }));
+    return this.saveDrafts(briefId, generated, insights);
   }
 
   private async pickExamples(
@@ -500,7 +560,7 @@ export class ContentEngine {
       if (!claimed) continue;
       try {
         if (!claimed.channels?.length) throw new Error("the request has no channels");
-        const drafts = await this.proposeVariants(claimed.id, claimed.channels);
+        const drafts = claimed.format === "carousel" ? await this.createCarousel(claimed.id, claimed.channels) : await this.proposeVariants(claimed.id, claimed.channels);
         if (drafts.length === 0) throw new Error("the generator returned no drafts");
         await this.store.putBrief({ ...claimed, status: "ready", error: undefined });
         result.processed.push(claimed.id);

@@ -82,7 +82,16 @@ describe("supabaseCreateApi: requests", () => {
     const { client, calls } = fakeClient();
     await supabaseCreateApi(client).requestDrafts({ idea: "idé", channels: ["linkedin"], assetIds: ["a1"], goal: "" });
     expect(calls).toContainEqual(["from", "social_briefs"]);
-    expect(calls).toContainEqual(["insert", { idea: "idé", angle: null, goal: null, channels: ["linkedin"], asset_ids: ["a1"], status: "requested" }]);
+    expect(calls).toContainEqual(["insert", { idea: "idé", angle: null, goal: null, channels: ["linkedin"], asset_ids: ["a1"], status: "requested", format: "post", cta_keyword: null }]);
+  });
+
+  it("requestDrafts can ask for a carousel with a comment keyword; the keyword is dropped for ordinary posts", async () => {
+    const carousel = fakeClient();
+    await supabaseCreateApi(carousel.client).requestDrafts({ idea: "idé", channels: ["linkedin"], assetIds: [], format: "carousel", ctaKeyword: "MALL" });
+    expect(carousel.calls).toContainEqual(["insert", expect.objectContaining({ format: "carousel", cta_keyword: "MALL" })]);
+    const post = fakeClient();
+    await supabaseCreateApi(post.client).requestDrafts({ idea: "idé", channels: ["linkedin"], assetIds: [], format: "post", ctaKeyword: "MALL" });
+    expect(post.calls).toContainEqual(["insert", expect.objectContaining({ format: "post", cta_keyword: null })]);
   });
 
   it("requestDrafts and listRequests surface database errors", async () => {

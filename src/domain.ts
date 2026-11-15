@@ -66,6 +66,10 @@ export interface ContentBrief {
   assetIds: string[];
   /** Channels to draft for. Set on requests. */
   channels?: Channel[];
+  /** `carousel` = swipeable pages of text drawn by the engine. Absent means an ordinary post. */
+  format?: "post" | "carousel";
+  /** Carousel only: the word readers are asked to comment on the last page. */
+  ctaKeyword?: string;
   /** Absent means `ready` (briefs created directly by the engine). */
   status?: BriefStatus;
   /** Why a request failed. */

@@ -44,6 +44,15 @@ describe.each(makers)("Store contract: %s", (_name, make) => {
     expect(await store.getBrief(uuid())).toBeUndefined();
   });
 
+  it("briefs: the carousel format and comment keyword round-trip, and ordinary briefs stay without them", async () => {
+    const carousel: ContentBrief = { ...brief(), format: "carousel", ctaKeyword: "MALL" };
+    const plain = brief();
+    await store.putBrief(carousel);
+    await store.putBrief(plain);
+    expect(await store.getBrief(carousel.id)).toMatchObject({ format: "carousel", ctaKeyword: "MALL" });
+    expect((await store.getBrief(plain.id))!.format).toBeUndefined();
+  });
+
   it("briefs: requests round-trip with channels and status; list by status; atomic claim", async () => {
     const request: ContentBrief = { ...brief(), idea: "from the app", channels: ["linkedin", "instagram"], status: "requested" };
     const done: ContentBrief = { ...brief(), status: "failed", error: "boom" };

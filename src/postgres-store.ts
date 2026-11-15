@@ -56,6 +56,8 @@ function toBrief(r: Row): ContentBrief {
     sourcePostIds: r.source_post_ids,
     assetIds: r.asset_ids,
     channels: opt(r.channels),
+    format: r.format === "carousel" ? "carousel" : undefined,
+    ctaKeyword: opt(r.cta_keyword),
     status: r.status,
     error: opt(r.error),
     claimedAt: iso(r.claimed_at),
@@ -156,12 +158,13 @@ export class PostgresStore implements Store {
 
   async putBrief(b: ContentBrief) {
     await this.sql.query(
-      `insert into social_briefs (id, idea, angle, goal, source_post_ids, asset_ids, channels, status, error, created_at)
-       values ($1, $2, $3, $4, $5::uuid[], $6::uuid[], $7::text[], $8, $9, $10)
+      `insert into social_briefs (id, idea, angle, goal, source_post_ids, asset_ids, channels, status, error, created_at, format, cta_keyword)
+       values ($1, $2, $3, $4, $5::uuid[], $6::uuid[], $7::text[], $8, $9, $10, $11, $12)
        on conflict (id) do update set idea = excluded.idea, angle = excluded.angle, goal = excluded.goal,
          source_post_ids = excluded.source_post_ids, asset_ids = excluded.asset_ids,
-         channels = excluded.channels, status = excluded.status, error = excluded.error`,
-      [b.id, b.idea, b.angle ?? null, b.goal ?? null, b.sourcePostIds, b.assetIds, b.channels ?? null, b.status ?? "ready", b.error ?? null, b.createdAt],
+         channels = excluded.channels, status = excluded.status, error = excluded.error,
+         format = excluded.format, cta_keyword = excluded.cta_keyword`,
+      [b.id, b.idea, b.angle ?? null, b.goal ?? null, b.sourcePostIds, b.assetIds, b.channels ?? null, b.status ?? "ready", b.error ?? null, b.createdAt, b.format ?? "post", b.ctaKeyword ?? null],
     );
   }
 

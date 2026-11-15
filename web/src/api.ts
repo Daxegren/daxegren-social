@@ -109,7 +109,7 @@ export function validateUpload(file: { name: string; type: string; size: number 
 export interface CreateApi {
   listAssets(limit?: number): Promise<Asset[]>;
   uploadAsset(file: File): Promise<Asset>;
-  requestDrafts(input: { idea: string; angle?: string; goal?: string; channels: Channel[]; assetIds: string[] }): Promise<void>;
+  requestDrafts(input: { idea: string; angle?: string; goal?: string; channels: Channel[]; assetIds: string[]; format?: "post" | "carousel"; ctaKeyword?: string }): Promise<void>;
   listRequests(limit?: number): Promise<ContentBrief[]>;
 }
 
@@ -122,6 +122,8 @@ function toBrief(r: Row): ContentBrief {
     sourcePostIds: r.source_post_ids ?? [],
     assetIds: r.asset_ids ?? [],
     channels: opt(r.channels),
+    format: r.format === "carousel" ? "carousel" : undefined,
+    ctaKeyword: opt(r.cta_keyword),
     status: r.status,
     error: opt(r.error),
     createdAt: new Date(r.created_at).toISOString(),
@@ -161,10 +163,10 @@ export function supabaseCreateApi(client: SupabaseClient): CreateApi {
       return toAsset(data);
     },
 
-    async requestDrafts({ idea, angle, goal, channels, assetIds }) {
+    async requestDrafts({ idea, angle, goal, channels, assetIds, format, ctaKeyword }) {
       const { error } = await client
         .from("social_briefs")
-        .insert({ idea, angle: angle || null, goal: goal || null, channels, asset_ids: assetIds, status: "requested" });
+        .insert({ idea, angle: angle || null, goal: goal || null, channels, asset_ids: assetIds, status: "requested", format: format ?? "post", cta_keyword: format === "carousel" ? ctaKeyword || null : null });
       if (error) throw new Error(error.message);
     },
 

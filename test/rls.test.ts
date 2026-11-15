@@ -123,6 +123,19 @@ describe("requests and uploads from the app (RLS)", () => {
     await expect(as(ADMIN, () => db.query(`update social_briefs set status = 'ready'`))).rejects.toThrow(/permission denied/);
   });
 
+  it("a reviewer can ask for a carousel with a comment keyword; anything else is refused", async () => {
+    const ok = await as(ADMIN, () => db.query(`insert into social_briefs (idea, channels, status, format, cta_keyword) values ('x', array['linkedin'], 'requested', 'carousel', 'MALL') returning format, cta_keyword`));
+    expect(ok.rows).toEqual([{ format: "carousel", cta_keyword: "MALL" }]);
+    const plain = await as(ADMIN, () => db.query(request()));
+    expect(plain.rows).toHaveLength(1);
+    expect((await db.query(`select format from social_briefs where id = '${(plain.rows[0] as { id: string }).id}'`)).rows).toEqual([{ format: "post" }]);
+    await expect(as(ADMIN, () => db.query(`insert into social_briefs (idea, channels, status, format) values ('x', array['linkedin'], 'requested', 'podcast')`))).rejects.toThrow(/check/);
+    for (const keyword of ["two words", "x".repeat(31), "a;b", ""]) {
+      await expect(as(ADMIN, () => db.query(`insert into social_briefs (idea, channels, status, format, cta_keyword) values ('x', array['linkedin'], 'requested', 'carousel', '${keyword}')`))).rejects.toThrow(/social_briefs_cta_keyword/);
+    }
+    await expect(as(STRANGER, () => db.query(`insert into social_briefs (idea, channels, status, format) values ('x', array['linkedin'], 'requested', 'carousel')`))).rejects.toThrow(/row-level security/);
+  });
+
   it("rejects requests with unknown, empty or missing channels, and oversized ideas", async () => {
     await expect(as(ADMIN, () => db.query(request(`array['myspace']`)))).rejects.toThrow(/social_briefs_requested_valid/);
     await expect(as(ADMIN, () => db.query(request(`array[]::text[]`)))).rejects.toThrow(/social_briefs_requested_valid/);

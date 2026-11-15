@@ -9,6 +9,8 @@ import { SupabaseStorage } from "../adapters/supabase-storage.js";
 import type { ChannelAdapter, FetchLike } from "../adapters/types.js";
 import { CHANNELS, type Channel } from "../domain.js";
 import { ContentEngine } from "../engine.js";
+import { brandFromEnv } from "../carousel/build.js";
+import { ClaudeCarouselWriter } from "../carousel/write.js";
 import { ClaudeContentGenerator, type ContentGenerator } from "../generate.js";
 import { WebhookNotifier, type Notifier, type WebhookFormat } from "../notify.js";
 import type { Store } from "../store.js";
@@ -100,6 +102,8 @@ export function buildEngine(env: Env, store: Store, opts: { fetch?: FetchLike; n
       store,
       adapters,
       generator,
+      carouselWriter: env.ANTHROPIC_API_KEY ? new ClaudeCarouselWriter({ apiKey: env.ANTHROPIC_API_KEY, model: env.CLAUDE_MODEL, fetch: opts.fetch }) : undefined,
+      brand: brandFromEnv(env),
       autoApprove,
       now: opts.now,
       sleep: opts.sleep,

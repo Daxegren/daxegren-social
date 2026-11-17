@@ -1,5 +1,8 @@
 # Deploy and cost
 
+On a phone? Follow [MOBILE.md](MOBILE.md) (Swedish) for the first run: it uses the **Apply database migrations** workflow
+instead of the command line below.
+
 No Lovable and no server of your own. Four pieces, each with a free tier as far as I know — **check current
 pricing and limits on each provider's site before relying on this**; they change.
 

@@ -4,6 +4,8 @@ Content engine for my own channels. It reads what I have already published, lear
 content from a brief (using my own photos and videos, generated media, or both), and schedules and publishes it
 — with a review queue in between.
 
+- **First run from your phone, step by step (Swedish): [docs/MOBILE.md](docs/MOBILE.md)**
+- Carousels: [docs/CAROUSELS.md](docs/CAROUSELS.md); voice memos: [docs/MEMOS.md](docs/MEMOS.md)
 - Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - Deploy, setup and running costs: [docs/DEPLOY.md](docs/DEPLOY.md)
 - Importing posts you already published: [docs/IMPORT.md](docs/IMPORT.md)

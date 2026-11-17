@@ -1,0 +1,22 @@
+name: Apply database migrations
+# Creates and updates the database tables. Safe to run again: each migration is applied once, in one transaction,
+# and a migration that fails is rolled back completely. Run it after the first setup and after every update that adds a
+# file under db/migrations. Needs only the secret DATABASE_URL (the Supabase *session pooler* connection string).
+on:
+  workflow_dispatch:
+concurrency:
+  group: social-worker
+  cancel-in-progress: false
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npm run build
+      - run: node dist/worker/main.js migrate
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

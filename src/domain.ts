@@ -70,6 +70,8 @@ export interface ContentBrief {
   format?: "post" | "carousel";
   /** Carousel only: the word readers are asked to comment on the last page. */
   ctaKeyword?: string;
+  /** The voice memo this idea came from. */
+  memoId?: string;
   /** Absent means `ready` (briefs created directly by the engine). */
   status?: BriefStatus;
   /** Why a request failed. */
@@ -127,4 +129,26 @@ export interface MediaJob {
   error?: string;
   createdAt: string;
   finishedAt?: string;
+}
+
+/** `planning` = a worker is turning the transcript into ideas and drafts. `planned` = done. */
+export type MemoStatus = "transcribed" | "planning" | "planned" | "failed";
+
+/** A voice memo (or pasted text) that ideas and drafts are made from. Keeps the transcript, never the audio. */
+export interface Memo {
+  id: string;
+  source: "drive" | "cli";
+  /** Set for memos picked up from Drive; one memo per file. */
+  driveFileId?: string;
+  name: string;
+  transcript?: string;
+  status: MemoStatus;
+  error?: string;
+  /** How many times drafting from the transcript has been tried. */
+  attempts: number;
+  /** Ideas that became drafts. */
+  ideaCount: number;
+  /** When a worker started planning it. */
+  claimedAt?: string;
+  createdAt: string;
 }

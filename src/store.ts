@@ -5,6 +5,8 @@ import type {
   ContentBrief,
   MediaJob,
   MediaJobStatus,
+  Memo,
+  MemoStatus,
   PostVariant,
   PublishedPost,
   VariantStatus,
@@ -33,6 +35,13 @@ export interface Store {
   getVariant(id: string): Promise<PostVariant | undefined>;
   listVariants(filter?: { status?: VariantStatus; briefId?: string }): Promise<PostVariant[]>;
 
+  putMemo(memo: Memo): Promise<void>;
+  getMemo(id: string): Promise<Memo | undefined>;
+  getMemoByDriveFile(driveFileId: string): Promise<Memo | undefined>;
+  listMemos(filter?: { status?: MemoStatus }): Promise<Memo[]>;
+  /** Atomic compare-and-swap on a memo's status. Returns the updated memo, or undefined if it was not in `from`. */
+  transitionMemo(id: string, from: MemoStatus, to: MemoStatus): Promise<Memo | undefined>;
+
   putMediaJob(job: MediaJob): Promise<void>;
   getMediaJob(id: string): Promise<MediaJob | undefined>;
   listMediaJobs(filter?: { statuses?: MediaJobStatus[] }): Promise<MediaJob[]>;
@@ -52,6 +61,7 @@ export class MemoryStore implements Store {
   private briefs = new Map<string, ContentBrief>();
   private variants = new Map<string, PostVariant>();
   private mediaJobs = new Map<string, MediaJob>();
+  private memos = new Map<string, Memo>();
 
   constructor(private readonly opts: { now?: () => Date } = {}) {}
 
@@ -120,6 +130,35 @@ export class MemoryStore implements Store {
     b.status = to;
     b.claimedAt = this.now();
     return structuredClone(b);
+  }
+
+  async putMemo(memo: Memo) {
+    this.memos.set(memo.id, structuredClone(memo));
+  }
+
+  async getMemo(id: string) {
+    const m = this.memos.get(id);
+    return m ? structuredClone(m) : undefined;
+  }
+
+  async getMemoByDriveFile(driveFileId: string) {
+    const m = [...this.memos.values()].find((x) => x.driveFileId === driveFileId);
+    return m ? structuredClone(m) : undefined;
+  }
+
+  async listMemos(filter?: { status?: MemoStatus }) {
+    return [...this.memos.values()]
+      .filter((m) => !filter?.status || m.status === filter.status)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+      .map((m) => structuredClone(m));
+  }
+
+  async transitionMemo(id: string, from: MemoStatus, to: MemoStatus) {
+    const m = this.memos.get(id);
+    if (!m || m.status !== from) return undefined;
+    m.status = to;
+    m.claimedAt = this.now();
+    return structuredClone(m);
   }
 
   async putVariant(variant: PostVariant) {

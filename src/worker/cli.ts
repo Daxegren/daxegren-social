@@ -7,10 +7,12 @@ import { PostgresStore, type SqlClient } from "../postgres-store.js";
 import { formatReport, runDoctor } from "./doctor.js";
 import { buildDrive, buildEngine, buildStorage, type Env } from "./env.js";
 import { describeDriveSync, syncDrive } from "../drive-sync.js";
+import { describeMemoSync, syncMemos } from "../memo-sync.js";
 import { brandFromEnv, buildCarousel } from "../carousel/build.js";
 import { ClaudeCarouselWriter, DEFAULT_SLIDES, MAX_SLIDES, MIN_SLIDES } from "../carousel/write.js";
 import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
+import { audioMime, MAX_AUDIO_BYTES } from "../transcribe.js";
 import { listBufferChannels } from "../adapters/buffer-channels.js";
 import { parsePosts } from "./importer.js";
 import { migrate } from "./migrate.js";
@@ -31,6 +33,11 @@ export const USAGE = `usage: social <command>
   carousel "<idea>" --channels a,b         write a carousel (pages drawn as images) and draft one variant per channel
            [--slides 4-12] [--keyword <word>] [--assets id,id]
            [--preview <dir>]                 only draw the pages into <dir> (no database, no storage)
+  memo <audio-file>                         transcribe a recording and draft ideas from it (Gemini + Claude)
+  memo --text "<what you said>"             draft ideas from text you already have (no transcription)
+           [--name <label>]
+  memo-sync                                 pick up new voice memos from your Drive folder and draft ideas from them
+           [--max <n>]
   add-asset <image|video> <https-url>       register a photo or video you made yourself; prints its id
   media video "<prompt>"                    generate a video (costs money; capped per month)
            [--source <https image url>] [--model <id>] [--async]
@@ -79,6 +86,8 @@ export async function runCli(argv: string[], deps: CliDeps): Promise<string> {
       slides: { type: "string" },
       keyword: { type: "string" },
       preview: { type: "string" },
+      text: { type: "string" },
+      name: { type: "string" },
     },
   });
   const [command, ...rest] = positionals;
@@ -153,6 +162,35 @@ export async function runCli(argv: string[], deps: CliDeps): Promise<string> {
       const text = describeDriveSync(result);
       if (result.failed.length && !result.added.length && !result.updated.length) throw new Error(text);
       return text;
+    }
+    case "memo-sync": {
+      const drive = buildDrive(deps.env, { fetch: deps.fetch, now: deps.now });
+      if (!drive) throw new Error("GOOGLE_SERVICE_ACCOUNT_JSON and DRIVE_FOLDER_ID must be set (see docs/MEMOS.md)");
+      const maxNew = values.max ? Number(values.max) : undefined;
+      if (maxNew !== undefined && !(maxNew > 0)) throw new Error("--max must be a positive number");
+      const result = await syncMemos({ drive, store: new PostgresStore(deps.sql), engine, maxNew });
+      const text = describeMemoSync(result);
+      if (result.failed.length && result.transcribed.length === 0 && result.planned === 0) throw new Error(text);
+      return text;
+    }
+    case "memo": {
+      const label = values.name;
+      const memo = values.text
+        ? await engine.addMemoFromText({ name: label ?? "Text", transcript: values.text })
+        : await (async () => {
+            const file = rest[0];
+            if (!file) throw new Error('usage: memo <audio-file>  or  memo --text "<what you said>"');
+            if (statSync(file).size > MAX_AUDIO_BYTES) throw new Error(`the file is larger than ${MAX_AUDIO_BYTES / 1024 / 1024} MB (about 25 minutes); split it`);
+            const mimeType = audioMime("", file);
+            if (!mimeType) throw new Error("unsupported audio format; use m4a, mp3, wav, aac, ogg, flac or webm");
+            return engine.addMemoFromAudio({ name: label ?? basename(file), bytes: new Uint8Array(readFileSync(file)), mimeType });
+          })();
+      if (memo.status === "failed") throw new Error(`memo failed: ${memo.error}`);
+      const done = await engine.processMemos();
+      const after = await new PostgresStore(deps.sql).getMemo(memo.id);
+      const summary = `memo ${memo.id}: ${after?.status ?? "unknown"}, ${after?.ideaCount ?? 0} idea(s), ${done.drafts} draft(s)`;
+      if (after?.status !== "planned") throw new Error(`${summary}${after?.error ? `\n${after.error}` : ""}`);
+      return after.error ? `${summary}\n${after.error}` : summary;
     }
     case "carousel": {
       const idea = rest[0];

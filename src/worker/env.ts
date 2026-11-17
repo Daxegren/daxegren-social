@@ -12,6 +12,8 @@ import { ContentEngine } from "../engine.js";
 import { brandFromEnv } from "../carousel/build.js";
 import { ClaudeCarouselWriter } from "../carousel/write.js";
 import { ClaudeContentGenerator, type ContentGenerator } from "../generate.js";
+import { ClaudeMemoPlanner } from "../memo.js";
+import { GeminiTranscriber } from "../transcribe.js";
 import { WebhookNotifier, type Notifier, type WebhookFormat } from "../notify.js";
 import type { Store } from "../store.js";
 
@@ -41,6 +43,14 @@ export function buildStorage(env: Env, opts: { fetch?: FetchLike } = {}): Supaba
   return env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY
     ? new SupabaseStorage({ url: env.SUPABASE_URL, serviceRoleKey: env.SUPABASE_SERVICE_ROLE_KEY, bucket: env.SOCIAL_MEDIA_BUCKET, fetch: opts.fetch })
     : undefined;
+}
+
+/** `MEMO_CHANNELS=linkedin,instagram`: where voice-memo ideas are drafted. Unset means every configured channel. */
+export function memoChannels(env: Env): Channel[] | undefined {
+  const names = (env.MEMO_CHANNELS ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  if (names.length === 0) return undefined;
+  for (const n of names) if (!(CHANNELS as readonly string[]).includes(n)) throw new Error(`MEMO_CHANNELS: unknown channel "${n}"`);
+  return names as Channel[];
 }
 
 export interface Wiring {
@@ -90,6 +100,9 @@ export function buildEngine(env: Env, store: Store, opts: { fetch?: FetchLike; n
   const cap = env.MEDIA_MONTHLY_CAP_USD ? Number(env.MEDIA_MONTHLY_CAP_USD) : undefined;
   if (cap !== undefined && !(cap >= 0)) throw new Error(`MEDIA_MONTHLY_CAP_USD must be a number, got "${env.MEDIA_MONTHLY_CAP_USD}"`);
 
+  const memoIdeas = env.MEMO_MAX_IDEAS ? Number(env.MEMO_MAX_IDEAS) : undefined;
+  if (memoIdeas !== undefined && !(Number.isInteger(memoIdeas) && memoIdeas >= 1 && memoIdeas <= 6)) throw new Error(`MEMO_MAX_IDEAS must be a whole number from 1 to 6, got "${env.MEMO_MAX_IDEAS}"`);
+
   const formats: WebhookFormat[] = ["ntfy", "slack", "discord", "json"];
   if (env.NOTIFY_FORMAT && !formats.includes(env.NOTIFY_FORMAT as WebhookFormat)) {
     throw new Error(`NOTIFY_FORMAT must be one of ${formats.join(", ")}, got "${env.NOTIFY_FORMAT}"`);
@@ -102,6 +115,10 @@ export function buildEngine(env: Env, store: Store, opts: { fetch?: FetchLike; n
       store,
       adapters,
       generator,
+      transcriber: env.GEMINI_API_KEY ? new GeminiTranscriber({ apiKey: env.GEMINI_API_KEY, model: env.GEMINI_TRANSCRIBE_MODEL, apiRevision: env.GEMINI_API_REVISION, fetch: opts.fetch }) : undefined,
+      memoPlanner: env.ANTHROPIC_API_KEY ? new ClaudeMemoPlanner({ apiKey: env.ANTHROPIC_API_KEY, model: env.CLAUDE_MODEL, fetch: opts.fetch }) : undefined,
+      memoChannels: memoChannels(env),
+      memoMaxIdeas: env.MEMO_MAX_IDEAS ? Number(env.MEMO_MAX_IDEAS) : undefined,
       carouselWriter: env.ANTHROPIC_API_KEY ? new ClaudeCarouselWriter({ apiKey: env.ANTHROPIC_API_KEY, model: env.CLAUDE_MODEL, fetch: opts.fetch }) : undefined,
       brand: brandFromEnv(env),
       autoApprove,

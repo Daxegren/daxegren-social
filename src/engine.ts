@@ -3,7 +3,9 @@ import { CHANNEL_LABELS, CHANNEL_SPECS, validateVariant } from "./channels.js";
 import { buildCarousel } from "./carousel/build.js";
 import type { Brand } from "./carousel/render.js";
 import { DEFAULT_SLIDES, MAX_SLIDES, MIN_SLIDES, type CarouselWriter } from "./carousel/write.js";
-import type { Asset, AssetKind, Channel, ContentBrief, MediaJob, PostVariant, PublishedPost } from "./domain.js";
+import type { Asset, AssetKind, Channel, ContentBrief, MediaJob, Memo, PostVariant, PublishedPost } from "./domain.js";
+import { DEFAULT_MEMO_IDEAS, MAX_MEMO_IDEAS, type MemoPlanner } from "./memo.js";
+import type { Transcriber } from "./transcribe.js";
 import { AdapterError, NotSupportedError, type ChannelAdapter, type FetchLike, type RemotePost } from "./adapters/types.js";
 import type { ContentGenerator, GeneratedVariant } from "./generate.js";
 import {
@@ -36,6 +38,14 @@ export interface EngineConfig {
   imageGenerator?: ImageGenerator;
   /** Writes carousels. Needs `mediaStorage` as well: the pages are drawn here and stored as public images. */
   carouselWriter?: CarouselWriter;
+  /** Turns recordings into text. Needed for voice memos from audio. */
+  transcriber?: Transcriber;
+  /** Finds the ideas in a transcript. Needed for voice memos. */
+  memoPlanner?: MemoPlanner;
+  /** Channels voice-memo ideas are drafted for. Default: every configured channel. */
+  memoChannels?: Channel[];
+  /** Ideas per memo, 1 to 6. Default 3. */
+  memoMaxIdeas?: number;
   /** Colours and handle drawn on carousel pages. */
   brand?: Brand;
   /** Pause between safe retries of a video submission. Injectable for tests. */
@@ -394,6 +404,7 @@ export class ContentEngine {
     assetIds?: string[];
     format?: ContentBrief["format"];
     ctaKeyword?: string;
+    memoId?: string;
   }): Promise<ContentBrief> {
     const brief: ContentBrief = {
       id: crypto.randomUUID(),
@@ -404,6 +415,7 @@ export class ContentEngine {
       assetIds: input.assetIds ?? [],
       format: input.format,
       ctaKeyword: input.ctaKeyword,
+      memoId: input.memoId,
       status: "ready",
       createdAt: this.now().toISOString(),
     };
@@ -545,6 +557,119 @@ export class ContentEngine {
     const updated: PostVariant = { ...variant, status: "scheduled", attempts: 0, scheduledAt: scheduledAt.toISOString() };
     await this.store.putVariant(updated);
     return updated;
+  }
+
+  // ── Voice memos ───────────────────────────────────────────────────────
+
+  /**
+   * Transcribes a recording and keeps the transcript (never the audio). The same Drive file is never transcribed twice.
+   * A format or size the transcriber can never accept is recorded as a failed memo, so it is not retried every run;
+   * a temporary error is thrown, and nothing is recorded, so the next run tries again.
+   */
+  async addMemoFromAudio(input: { name: string; bytes: Uint8Array; mimeType: string; driveFileId?: string }): Promise<Memo> {
+    if (input.driveFileId) {
+      const existing = await this.store.getMemoByDriveFile(input.driveFileId);
+      if (existing) return existing;
+    }
+    const transcriber = this.cfg.transcriber;
+    if (!transcriber) throw new Error("no transcriber is configured (GEMINI_API_KEY is needed to turn recordings into text)");
+    let transcript: string;
+    try {
+      transcript = (await transcriber.transcribe({ bytes: input.bytes, mimeType: input.mimeType, name: input.name })).trim();
+    } catch (err) {
+      if (!(err instanceof AdapterError) || !err.permanent) throw err;
+      return this.saveMemo({ source: input.driveFileId ? "drive" : "cli", driveFileId: input.driveFileId, name: input.name, status: "failed", error: err.message.slice(0, 500) });
+    }
+    if (!transcript) return this.saveMemo({ source: input.driveFileId ? "drive" : "cli", driveFileId: input.driveFileId, name: input.name, status: "failed", error: "no speech was found in the recording" });
+    return this.saveMemo({ source: input.driveFileId ? "drive" : "cli", driveFileId: input.driveFileId, name: input.name, transcript, status: "transcribed" });
+  }
+
+  /** A memo from text you already have (dictated, pasted or exported from a notes app). */
+  async addMemoFromText(input: { name: string; transcript: string }): Promise<Memo> {
+    const transcript = input.transcript.trim();
+    if (transcript.length < 40) throw new Error("the text is too short to find ideas in (at least 40 characters)");
+    return this.saveMemo({ source: "cli", name: input.name, transcript, status: "transcribed" });
+  }
+
+  private async saveMemo(m: Pick<Memo, "source" | "name" | "status"> & Partial<Memo>): Promise<Memo> {
+    const memo: Memo = { id: crypto.randomUUID(), attempts: 0, ideaCount: 0, createdAt: this.now().toISOString(), ...m };
+    await this.store.putMemo(memo);
+    return memo;
+  }
+
+  /**
+   * Finds the ideas in a memo's transcript and drafts them (a carousel for lists and explanations, a post otherwise).
+   * Everything lands in the review queue. A memo that could not be drafted stays open and is tried again by the next run,
+   * up to three times.
+   */
+  async planMemo(memoId: string): Promise<{ memo: Memo; drafts: PostVariant[]; errors: string[] } | undefined> {
+    const claimed = await this.store.transitionMemo(memoId, "transcribed", "planning");
+    if (!claimed) return undefined;
+    const errors: string[] = [];
+    const drafts: PostVariant[] = [];
+    let ideas = 0;
+    try {
+      const planner = this.cfg.memoPlanner;
+      if (!planner) throw new Error("no memo planner is configured (ANTHROPIC_API_KEY is needed)");
+      if (!claimed.transcript) throw new Error("the memo has no transcript");
+      const channels = this.cfg.memoChannels ?? (Object.keys(this.adapters) as Channel[]);
+      if (channels.length === 0) throw new Error("no channels to draft for (configure a channel, or set MEMO_CHANNELS)");
+      const maxIdeas = Math.min(Math.max(this.cfg.memoMaxIdeas ?? DEFAULT_MEMO_IDEAS, 1), MAX_MEMO_IDEAS);
+
+      const insights = await this.analyze(channels);
+      const examples = await this.pickExamples({ id: "memo", idea: claimed.transcript.slice(0, 300), sourcePostIds: [], assetIds: [], createdAt: claimed.createdAt }, insights);
+      const planned = await planner.plan({ transcript: claimed.transcript, maxIdeas, channels, examples });
+
+      for (const idea of planned) {
+        const carousel = idea.format === "carousel" && this.cfg.carouselWriter && this.cfg.mediaStorage;
+        const brief = await this.createBrief({ idea: idea.idea, angle: idea.angle, format: carousel ? "carousel" : "post", ctaKeyword: carousel ? idea.keyword : undefined, memoId: claimed.id });
+        try {
+          const made = carousel ? await this.createCarousel(brief.id, channels) : await this.proposeVariants(brief.id, channels);
+          if (made.length === 0) throw new Error("the generator returned no drafts");
+          drafts.push(...made);
+          ideas++;
+        } catch (err) {
+          const message = (err as Error).message.slice(0, 300);
+          errors.push(`${idea.title}: ${message}`);
+          await this.store.putBrief({ ...brief, status: "failed", error: message });
+        }
+      }
+      if (planned.length > 0 && ideas === 0) throw new Error(errors.join("; "));
+
+      const memo: Memo = { ...claimed, status: "planned", ideaCount: ideas, error: planned.length === 0 ? "the memo held no idea worth publishing" : errors.length ? errors.join("; ").slice(0, 500) : undefined };
+      await this.store.putMemo(memo);
+      return { memo, drafts, errors };
+    } catch (err) {
+      const attempts = claimed.attempts + 1;
+      const memo: Memo = { ...claimed, status: attempts >= 3 ? "failed" : "transcribed", attempts, error: (err as Error).message.slice(0, 500) };
+      await this.store.putMemo(memo);
+      return { memo, drafts, errors: [...errors, memo.error ?? "unknown error"] };
+    }
+  }
+
+  /** Drafts every memo that is waiting, and puts back any that a worker abandoned while planning. */
+  async processMemos(): Promise<{ planned: string[]; failed: string[]; drafts: number }> {
+    const result = { planned: [] as string[], failed: [] as string[], drafts: 0 };
+    const stale = this.now().getTime() - (this.cfg.strandedAfterMs ?? 30 * 60_000);
+    for (const m of await this.store.listMemos({ status: "planning" })) {
+      if (m.claimedAt && new Date(m.claimedAt).getTime() < stale) await this.store.putMemo({ ...m, status: "transcribed", attempts: m.attempts + 1, claimedAt: undefined, error: "planning was interrupted" });
+    }
+    for (const m of await this.store.listMemos({ status: "transcribed" })) {
+      const done = await this.planMemo(m.id);
+      if (!done) continue;
+      if (done.memo.status === "planned" && done.memo.ideaCount > 0) {
+        result.planned.push(m.id);
+        result.drafts += done.drafts.length;
+        await this.tell({ kind: "memo", title: done.drafts.length === 1 ? "Röstmemo klart: 1 utkast väntar" : `Röstmemo klart: ${done.drafts.length} utkast väntar`, message: `${excerpt(m.name, 60)}\n${done.memo.ideaCount} idé(er) blev utkast.`, url: this.cfg.appUrl });
+      } else if (done.memo.status === "planned") {
+        result.planned.push(m.id);
+        await this.tell({ kind: "memo", title: "Röstmemot gav inga idéer", message: `${excerpt(m.name, 60)}\nInget i det var värt att publicera.` });
+      } else if (done.memo.status === "failed") {
+        result.failed.push(m.id);
+        await this.tell({ kind: "memo", title: "Röstmemot kunde inte göras till utkast", message: `${excerpt(m.name, 60)}\n${excerpt(done.memo.error ?? "okänt fel", 200)}` });
+      }
+    }
+    return result;
   }
 
   // ── 5. Publish ────────────────────────────────────────────────────────

@@ -6,6 +6,8 @@ import type {
   ContentBrief,
   MediaJob,
   MediaJobStatus,
+  Memo,
+  MemoStatus,
   Metrics,
   PostVariant,
   PublishedPost,
@@ -56,10 +58,27 @@ function toBrief(r: Row): ContentBrief {
     sourcePostIds: r.source_post_ids,
     assetIds: r.asset_ids,
     channels: opt(r.channels),
+    memoId: opt(r.memo_id),
     format: r.format === "carousel" ? "carousel" : undefined,
     ctaKeyword: opt(r.cta_keyword),
     status: r.status,
     error: opt(r.error),
+    claimedAt: iso(r.claimed_at),
+    createdAt: iso(r.created_at)!,
+  };
+}
+
+function toMemo(r: Row): Memo {
+  return {
+    id: r.id,
+    source: r.source,
+    driveFileId: opt(r.drive_file_id),
+    name: r.name,
+    transcript: opt(r.transcript),
+    status: r.status,
+    error: opt(r.error),
+    attempts: r.attempts,
+    ideaCount: r.idea_count,
     claimedAt: iso(r.claimed_at),
     createdAt: iso(r.created_at)!,
   };
@@ -158,13 +177,13 @@ export class PostgresStore implements Store {
 
   async putBrief(b: ContentBrief) {
     await this.sql.query(
-      `insert into social_briefs (id, idea, angle, goal, source_post_ids, asset_ids, channels, status, error, created_at, format, cta_keyword)
-       values ($1, $2, $3, $4, $5::uuid[], $6::uuid[], $7::text[], $8, $9, $10, $11, $12)
+      `insert into social_briefs (id, idea, angle, goal, source_post_ids, asset_ids, channels, status, error, created_at, format, cta_keyword, memo_id)
+       values ($1, $2, $3, $4, $5::uuid[], $6::uuid[], $7::text[], $8, $9, $10, $11, $12, $13::uuid)
        on conflict (id) do update set idea = excluded.idea, angle = excluded.angle, goal = excluded.goal,
          source_post_ids = excluded.source_post_ids, asset_ids = excluded.asset_ids,
          channels = excluded.channels, status = excluded.status, error = excluded.error,
-         format = excluded.format, cta_keyword = excluded.cta_keyword`,
-      [b.id, b.idea, b.angle ?? null, b.goal ?? null, b.sourcePostIds, b.assetIds, b.channels ?? null, b.status ?? "ready", b.error ?? null, b.createdAt, b.format ?? "post", b.ctaKeyword ?? null],
+         format = excluded.format, cta_keyword = excluded.cta_keyword, memo_id = excluded.memo_id`,
+      [b.id, b.idea, b.angle ?? null, b.goal ?? null, b.sourcePostIds, b.assetIds, b.channels ?? null, b.status ?? "ready", b.error ?? null, b.createdAt, b.format ?? "post", b.ctaKeyword ?? null, b.memoId ?? null],
     );
   }
 
@@ -223,6 +242,36 @@ export class PostgresStore implements Store {
       [id, from, to],
     );
     return rows[0] ? toVariant(rows[0]) : undefined;
+  }
+
+  async putMemo(m: Memo) {
+    await this.sql.query(
+      `insert into social_memos (id, source, drive_file_id, name, transcript, status, error, attempts, idea_count, claimed_at, created_at)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+       on conflict (id) do update set transcript = excluded.transcript, status = excluded.status, error = excluded.error,
+         attempts = excluded.attempts, idea_count = excluded.idea_count, claimed_at = excluded.claimed_at`,
+      [m.id, m.source, m.driveFileId ?? null, m.name, m.transcript ?? null, m.status, m.error ?? null, m.attempts, m.ideaCount, m.claimedAt ?? null, m.createdAt],
+    );
+  }
+
+  async getMemo(id: string) {
+    const rows = await this.sql.query<Row>(`select * from social_memos where id = $1`, [id]);
+    return rows[0] ? toMemo(rows[0]) : undefined;
+  }
+
+  async getMemoByDriveFile(driveFileId: string) {
+    const rows = await this.sql.query<Row>(`select * from social_memos where drive_file_id = $1`, [driveFileId]);
+    return rows[0] ? toMemo(rows[0]) : undefined;
+  }
+
+  async listMemos(filter?: { status?: MemoStatus }) {
+    const rows = await this.sql.query<Row>(`select * from social_memos where ($1::text is null or status = $1) order by created_at`, [filter?.status ?? null]);
+    return rows.map(toMemo);
+  }
+
+  async transitionMemo(id: string, from: MemoStatus, to: MemoStatus) {
+    const rows = await this.sql.query<Row>(`update social_memos set status = $3, claimed_at = now() where id = $1 and status = $2 returning *`, [id, from, to]);
+    return rows[0] ? toMemo(rows[0]) : undefined;
   }
 
   async putMediaJob(j: MediaJob) {

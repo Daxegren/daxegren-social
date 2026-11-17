@@ -1,0 +1,50 @@
+name: Voice memos
+# Picks up new voice memos from your Google Drive folder, turns them into text and drafts ideas from them.
+# Runs hourly and on demand (open the GitHub app → Actions → Voice memos → Run workflow right after you upload one).
+# Needs the secrets GOOGLE_SERVICE_ACCOUNT_JSON, DRIVE_FOLDER_ID, GEMINI_API_KEY, ANTHROPIC_API_KEY, DATABASE_URL.
+on:
+  schedule:
+    - cron: "23 * * * *"
+  workflow_dispatch:
+concurrency:
+  group: social-worker
+  cancel-in-progress: false
+jobs:
+  memos:
+    if: ${{ vars.SOCIAL_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npm run build
+      - run: node dist/worker/main.js memo-sync
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          DRIVE_FOLDER_ID: ${{ secrets.DRIVE_FOLDER_ID }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_TRANSCRIBE_MODEL: ${{ vars.GEMINI_TRANSCRIBE_MODEL }}
+          GEMINI_API_REVISION: ${{ vars.GEMINI_API_REVISION }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_MODEL: ${{ vars.CLAUDE_MODEL }}
+          MEMO_CHANNELS: ${{ vars.MEMO_CHANNELS }}
+          MEMO_MAX_IDEAS: ${{ vars.MEMO_MAX_IDEAS }}
+          CAROUSEL_HANDLE: ${{ vars.CAROUSEL_HANDLE }}
+          CAROUSEL_ACCENT: ${{ vars.CAROUSEL_ACCENT }}
+          CAROUSEL_THEME: ${{ vars.CAROUSEL_THEME }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SOCIAL_MEDIA_BUCKET: ${{ vars.SOCIAL_MEDIA_BUCKET }}
+          INSTAGRAM_USER_ID: ${{ secrets.INSTAGRAM_USER_ID }}
+          INSTAGRAM_ACCESS_TOKEN: ${{ secrets.INSTAGRAM_ACCESS_TOKEN }}
+          FACEBOOK_PAGE_ID: ${{ secrets.FACEBOOK_PAGE_ID }}
+          FACEBOOK_PAGE_ACCESS_TOKEN: ${{ secrets.FACEBOOK_PAGE_ACCESS_TOKEN }}
+          LINKEDIN_AUTHOR_URN: ${{ secrets.LINKEDIN_AUTHOR_URN }}
+          LINKEDIN_ACCESS_TOKEN: ${{ secrets.LINKEDIN_ACCESS_TOKEN }}
+          BUFFER_API_KEY: ${{ secrets.BUFFER_API_KEY }}
+          BUFFER_CHANNELS: ${{ vars.BUFFER_CHANNELS }}
+          NOTIFY_URL: ${{ secrets.NOTIFY_URL }}
+          APP_URL: ${{ vars.APP_URL }}

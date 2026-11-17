@@ -1,6 +1,6 @@
 import type { FetchLike } from "./adapters/types.js";
 
-export type NotifyKind = "drafts_ready" | "published" | "failed" | "request_failed" | "media" | "stranded" | "budget" | "test";
+export type NotifyKind = "drafts_ready" | "published" | "failed" | "request_failed" | "media" | "memo" | "stranded" | "budget" | "test";
 
 export interface NotifyEvent {
   kind: NotifyKind;

@@ -35,6 +35,7 @@ One repository, `@daxegren/social-engine`, standalone:
 | Analysis | `src/analyze.ts` | Engagement rate, best hours, length/media performance, time suggestion |
 | Generation | `src/generate.ts`, `src/claude.ts` | `ContentGenerator` on the official Anthropic SDK: Opus 5.5 with adaptive thinking, structured (JSON-schema) output, the server-side refusal fallback, and the creator's photos shown to the model |
 | Carousels | `src/carousel/` | Claude writes the pages and one caption per channel; the engine draws each page as a 1080×1350 JPEG (satori + resvg, bundled Inter font, no browser), stores the pages as public images and drafts a variant per channel. Free apart from the Claude call |
+| Voice memos | `src/transcribe.ts`, `src/memo.ts`, `src/memo-sync.ts` | A recording in Drive is transcribed (Gemini), Claude picks the points worth publishing, and each becomes a brief drafted as a post or a carousel. Only the transcript is stored; a failed memo is retried up to three times |
 | Media | `src/media.ts`, `src/adapters/higgsfield.ts`, `src/adapters/gemini-image.ts`, `src/adapters/supabase-storage.ts` | Paid video (Higgsfield) and image (Gemini) generation as persisted jobs: estimate, monthly cap, submit, poll, copy to durable storage, register as an `Asset` |
 | Scheduler | `src/scheduler.ts` | Claims due variants atomically, validates, publishes, retries with backoff |
 | Engine | `src/engine.ts` | Orchestrates everything above |

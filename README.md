@@ -35,6 +35,7 @@ npm run social -- media video "slow pan" --source https://example.com/product.jp
 npm run social -- media image "a red mug on a wooden table" --aspect 4:5          # Gemini, costs money, capped
 npm run social -- generate "Why I build in public" --channels linkedin,instagram --assets <id>
 npm run social -- carousel "Three things about margin" --channels linkedin,instagram --keyword MALL   # swipeable pages, see docs/CAROUSELS.md
+npm run social -- memo --text "Jag tänkte prata om marginal …"   # ideas from what you said, see docs/MEMOS.md
 npm run social -- tick
 npm run social -- ingest instagram
 ```

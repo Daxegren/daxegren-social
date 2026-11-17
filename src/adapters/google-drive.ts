@@ -59,6 +59,15 @@ export class GoogleDriveSource {
 
   /** Photos and videos in the folder and its subfolders (three levels deep), newest first. */
   async listMedia(): Promise<DriveFile[]> {
+    return this.walk((f) => f.mimeType.startsWith("image/") || f.mimeType.startsWith("video/"));
+  }
+
+  /** Recordings (voice memos) in the folder and its subfolders, newest first. */
+  async listAudio(): Promise<DriveFile[]> {
+    return this.walk((f) => f.mimeType.startsWith("audio/"));
+  }
+
+  private async walk(accept: (f: DriveFile) => boolean): Promise<DriveFile[]> {
     const files: DriveFile[] = [];
     const queue = [{ id: this.cfg.folderId, depth: 0 }];
     while (queue.length && files.length < MAX_LISTED) {
@@ -78,7 +87,7 @@ export class GoogleDriveSource {
         for (const f of page.files ?? []) {
           if (f.mimeType === FOLDER) {
             if (folder.depth < MAX_DEPTH && ID.test(f.id)) queue.push({ id: f.id, depth: folder.depth + 1 });
-          } else if (f.mimeType.startsWith("image/") || f.mimeType.startsWith("video/")) {
+          } else if (accept(f)) {
             files.push(f);
           }
         }

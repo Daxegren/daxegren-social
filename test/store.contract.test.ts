@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import type { Asset, ContentBrief, MediaJob, PostVariant, PublishedPost } from "../src/domain.js";
+import type { Asset, ContentBrief, MediaJob, Memo, PostVariant, PublishedPost } from "../src/domain.js";
 import { ContentEngine } from "../src/engine.js";
 import { PostgresStore } from "../src/postgres-store.js";
 import { MemoryStore, type Store } from "../src/store.js";
@@ -51,6 +51,28 @@ describe.each(makers)("Store contract: %s", (_name, make) => {
     await store.putBrief(plain);
     expect(await store.getBrief(carousel.id)).toMatchObject({ format: "carousel", ctaKeyword: "MALL" });
     expect((await store.getBrief(plain.id))!.format).toBeUndefined();
+  });
+
+  it("memos: round-trip, found by Drive file, listed by status, atomic claim; briefs remember their memo", async () => {
+    const memo = (over: Partial<Memo> = {}): Memo => ({ id: uuid(), source: "drive", name: "Ny inspelning", transcript: "text", status: "transcribed", attempts: 0, ideaCount: 0, createdAt: T, ...over });
+    const a = memo({ driveFileId: "drive-a" });
+    const b = memo({ source: "cli", status: "planned", ideaCount: 2, error: "note" });
+    await store.putMemo(a);
+    await store.putMemo(b);
+    expect(await store.getMemo(a.id)).toEqual(a);
+    expect(await store.getMemo(b.id)).toEqual(b);
+    expect((await store.getMemoByDriveFile("drive-a"))!.id).toBe(a.id);
+    expect(await store.getMemoByDriveFile("nope")).toBeUndefined();
+    expect((await store.listMemos({ status: "transcribed" })).map((m) => m.id)).toEqual([a.id]);
+    expect(await store.listMemos()).toHaveLength(2);
+
+    const claims = await Promise.all([store.transitionMemo(a.id, "transcribed", "planning"), store.transitionMemo(a.id, "transcribed", "planning")]);
+    expect(claims.filter(Boolean)).toHaveLength(1);
+    expect(claims.find(Boolean)!.claimedAt).toBeDefined();
+
+    const fromMemo: ContentBrief = { ...brief(), memoId: a.id };
+    await store.putBrief(fromMemo);
+    expect((await store.getBrief(fromMemo.id))!.memoId).toBe(a.id);
   });
 
   it("briefs: requests round-trip with channels and status; list by status; atomic claim", async () => {

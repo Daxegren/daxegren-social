@@ -101,6 +101,26 @@ describe("review queue access (RLS)", () => {
 
 const PUBLIC_UPLOAD = (uid: string, file = "a.jpg") => `https://abc.supabase.co/storage/v1/object/public/social-media/uploads/${uid}/${file}`;
 
+describe("voice memos (RLS)", () => {
+  const memo = `insert into social_memos (source, name, transcript, status) values ('cli', 'Marginal', 'text', 'transcribed') returning id`;
+
+  it("a reviewer can read memos, anyone else sees none, and nobody can write them from the app", async () => {
+    await db.query(memo);
+    expect((await as(ADMIN, () => db.query(`select count(*)::int as n from social_memos`))).rows).toEqual([{ n: 1 }]);
+    expect((await as(STRANGER, () => db.query(`select count(*)::int as n from social_memos`))).rows).toEqual([{ n: 0 }]);
+    await expect(as(ADMIN, () => db.query(memo))).rejects.toThrow(/permission denied/);
+    await expect(as(ADMIN, () => db.query(`update social_memos set status = 'planned'`))).rejects.toThrow(/permission denied/);
+    await expect(as(ADMIN, () => db.query(`delete from social_memos`))).rejects.toThrow(/permission denied/);
+  });
+
+  it("a Drive file has at most one memo, and statuses are checked", async () => {
+    await db.query(`insert into social_memos (source, drive_file_id, name, status) values ('drive', 'f1', 'a', 'transcribed')`);
+    await expect(db.query(`insert into social_memos (source, drive_file_id, name, status) values ('drive', 'f1', 'b', 'transcribed')`)).rejects.toThrow(/unique|duplicate/);
+    await expect(db.query(`insert into social_memos (source, name, status) values ('drive', 'c', 'finished')`)).rejects.toThrow(/check/);
+    await expect(db.query(`insert into social_memos (source, name, status) values ('upload', 'c', 'transcribed')`)).rejects.toThrow(/check/);
+  });
+});
+
 describe("requests and uploads from the app (RLS)", () => {
   const request = (channels = `array['linkedin','instagram']`, status = "requested") =>
     `insert into social_briefs (idea, channels, status) values ('an idea', ${channels}, '${status}') returning id, status`;

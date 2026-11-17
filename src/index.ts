@@ -8,6 +8,8 @@ export * from "./media.js";
 export * from "./notify.js";
 export * from "./scheduler.js";
 export * from "./engine.js";
+export { GeminiTranscriber, audioMime, MAX_AUDIO_BYTES, type Transcriber, type AudioInput } from "./transcribe.js";
+export { ClaudeMemoPlanner, type MemoPlanner, type MemoIdea } from "./memo.js";
 export { renderSlide, DEFAULT_BRAND, type Slide, type Brand } from "./carousel/render.js";
 export { buildCarousel, brandFromEnv, type BuiltCarousel } from "./carousel/build.js";
 export { ClaudeCarouselWriter, type CarouselWriter, type CarouselInput, type WrittenCarousel } from "./carousel/write.js";

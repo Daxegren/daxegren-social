@@ -17,6 +17,14 @@ at any point**; your own photo is optional and becomes the background of the cov
 Channels that cannot show at least four images (TikTok, YouTube, Pinterest, Snapchat) are skipped. LinkedIn takes at
 most 9 pages and X at most 4, so the page count is capped to what the chosen channels accept.
 
+## The "point + takeaway" page
+
+A page can carry a short **takeaway box** ("Ta med dig: …", or "Steal this: …" in English): one practical line the reader
+can use, under the explanation. The writer may also mark one or two numbers or key phrases per page in the accent colour.
+This is the layout of the popular "Hack 1 / Hack 2 …" case-study carousels: a title, a few short paragraphs with the figures
+picked out, and a line to take away. The writer is told to mark only what your brief says: **it must never invent a
+figure to have something to highlight.** If you feed it a case study, check every number against its source.
+
 ## Ordering one
 
 **From your phone, in the review app:** *Skapa* → write the idea → format **Karusell** → optional comment word → pick

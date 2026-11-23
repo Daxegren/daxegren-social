@@ -39,6 +39,7 @@ const SYSTEM_PROMPT = `You write carousels (swipeable pages of text) for one spe
 - Page 1 is the cover: a hook that makes people swipe. Concrete and specific, at most about 70 characters.
 - Middle pages each carry ONE idea. Mix the kinds: "point" (a title and one or two sentences), "list" (3-6 short rows), "statement" (one punchy sentence).
 - The last page is kind "cta". Its title says what the reader gets or should do next. If a keyword is given, set it in \`keyword\`.
+- In a "point" page you may add \`takeaway\`: one practical line the reader can use, and \`takeawayLabel\`: its label in the page's language ("Ta med dig:" in Swedish). In bodies you may wrap one or two numbers or key phrases per page in **double asterisks** to make them stand out. Only mark what the brief actually says.
 - Keep the text on the pages short enough to read on a phone: titles under 70 characters, bodies under 200.
 - Write in the language of the creator's example posts; if there are none, write in Swedish.
 - Never invent facts, numbers, quotes, customers or results. If the brief does not say it, do not claim it.
@@ -62,6 +63,8 @@ const schema = (channels: Channel[]) => ({
           body: { type: "string" },
           items: { type: "array", items: { type: "string" } },
           keyword: { type: "string" },
+          takeaway: { type: "string" },
+          takeawayLabel: { type: "string" },
         },
         required: ["kind", "title"],
         additionalProperties: false,
@@ -155,6 +158,14 @@ export function parseCarousel(raw: string, input: Pick<CarouselInput, "channels"
     const slide: Slide = { kind, title };
     const body = clip(s.body, 500);
     if (body) slide.body = body;
+    if (kind === "point") {
+      const takeaway = clip(s.takeaway, 220);
+      if (takeaway) {
+        slide.takeaway = takeaway;
+        const label = clip(s.takeawayLabel, 30).replace(/\*/g, "");
+        if (label) slide.takeawayLabel = label;
+      }
+    }
     if (kind === "list") {
       const items = Array.isArray(s.items) ? (s.items as unknown[]).map((i) => clip(i, 120)).filter(Boolean).slice(0, 8) : [];
       if (items.length === 0) continue;

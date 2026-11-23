@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import jpeg from "jpeg-js";
 import { buildCarousel, brandFromEnv, coverPhoto } from "../src/carousel/build.js";
-import { cleanText, fit, renderSlide, SLIDE_HEIGHT, SLIDE_WIDTH, type Slide } from "../src/carousel/render.js";
+import { cleanText, fit, renderSlide, richWords, SLIDE_HEIGHT, SLIDE_WIDTH, type Slide } from "../src/carousel/render.js";
 import { ClaudeCarouselWriter, parseCarousel, type CarouselInput, type CarouselWriter, type WrittenCarousel } from "../src/carousel/write.js";
 import type { Asset, ContentBrief } from "../src/domain.js";
 import { ContentEngine } from "../src/engine.js";
@@ -30,7 +30,7 @@ describe("rendering", () => {
   it("draws every kind of page as a 1080x1350 JPEG", async () => {
     const kinds: Slide[] = [
       slide("cover", { title: "3 saker jag önskar att jag visste", body: "Och som sparade mig ett år." }),
-      slide("point", { title: "Börja med marginalen", body: "Räkna ut den per produkt." }),
+      slide("point", { title: "Börja med marginalen", body: "Räkna ut den per **produkt**, inte i snitt.\n\nDet ger **8 %** mer.", takeaway: "räkna marginalen per produkt innan du köper trafik.", takeawayLabel: "Ta med dig:" }),
       slide("list", { title: "Varje måndag", items: ["Marginal", "Returer", "Lagervärde"] }),
       slide("statement", { title: "Det du mäter förbättras." }),
       slide("cta", { title: "Vill du ha mallen?", keyword: "mall" }),
@@ -58,6 +58,17 @@ describe("rendering", () => {
     expect(mean(withPhoto.data)).toBeGreaterThan(mean(accent.data) + 5);
   }, 30_000);
 
+  it("marks emphasised words, keeps punctuation glued to them, and ignores unbalanced markers", () => {
+    expect(richWords("Det blir **30 portioner**, så **bra**.")).toEqual([
+      { word: "Det", strong: false, glued: false }, { word: "blir", strong: false, glued: false },
+      { word: "30", strong: true, glued: false }, { word: "portioner", strong: true, glued: false },
+      { word: ",", strong: false, glued: true }, { word: "så", strong: false, glued: false },
+      { word: "bra", strong: true, glued: false }, { word: ".", strong: false, glued: true },
+    ]);
+    expect(richWords("öppen **utan slut").map((w) => w.strong)).toEqual([false, true, true]);
+    expect(richWords("")).toEqual([]);
+  });
+
   it("removes characters the font cannot draw and keeps Swedish letters", () => {
     expect(cleanText("Åre ä ö 🚀 – “citat” 日本")).toBe("Åre ä ö – “citat”");
     expect(fit("kort", [[10, 100], [20, 60]])).toBe(100);
@@ -68,6 +79,13 @@ describe("rendering", () => {
 describe("parseCarousel", () => {
   const raw = (o: unknown) => JSON.stringify(o);
   const input = { channels: ["linkedin" as const], slideCount: 6 };
+
+  it("keeps a point page's takeaway and its label, and ignores a takeaway on other kinds", () => {
+    const written = parseCarousel(raw({ slides: [slide("cover"), { kind: "point", title: "A", takeaway: "  gör så här  ", takeawayLabel: "**Steal this:**" }, { kind: "statement", title: "B", takeaway: "ignoreras" }, slide("point", { title: "C" }), slide("cta")], captions: [] }), { channels: ["linkedin"], slideCount: 6 });
+    expect(written.slides[1]).toMatchObject({ takeaway: "gör så här", takeawayLabel: "Steal this:" });
+    expect(written.slides[2]!.takeaway).toBeUndefined();
+    expect(written.slides[3]!.takeaway).toBeUndefined();
+  });
 
   it("keeps cover first and the closing page last, and never more pages than asked for", () => {
     const written = parseCarousel(raw({ slides: [...slides(10), slide("cta", { title: "Dubbel", keyword: "X" })], captions: [{ channel: "linkedin", text: "hej" }] }), input);

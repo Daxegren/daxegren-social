@@ -17,6 +17,10 @@ export interface Slide {
   keyword?: string;
   /** `cover` only: a photo shown behind the title (public https URL, JPEG or PNG). */
   photoUri?: string;
+  /** `point` only: one practical line the reader can use, shown in its own box ("Steal this: ..."). */
+  takeaway?: string;
+  /** The box's label, in the language of the page. Default "Ta med dig:". */
+  takeawayLabel?: string;
 }
 
 export interface Brand {
@@ -69,10 +73,45 @@ const palette = (brand: Brand) =>
     ? { bg: "#0B0F14", text: "#F5F7FA", muted: "#9AA4B2", faint: "#232B36", onAccent: "#0B0F14" }
     : { bg: "#F7F5F0", text: "#10151C", muted: "#5B6573", faint: "#DDD9D0", onAccent: "#FFFFFF" };
 
+/** Splits text into words, marking the ones wrapped in **double asterisks** (the writer's way of picking out a number or a phrase). */
+export function richWords(text: string): Array<{ word: string; strong: boolean; glued: boolean }> {
+  const out: Array<{ word: string; strong: boolean; glued: boolean }> = [];
+  let strong = false;
+  let spaceBefore = true;
+  for (const [i, part] of text.split("**").entries()) {
+    // A word that touches the previous one (a comma straight after an emphasised word) is drawn without a gap.
+    let touches = i > 0 && out.length > 0 && !/^\s/.test(part) && !spaceBefore;
+    spaceBefore = part.length === 0 ? spaceBefore : /\s$/.test(part);
+    for (const word of part.split(/\s+/).filter(Boolean)) {
+      out.push({ word, strong, glued: touches });
+      touches = false;
+    }
+    strong = !strong;
+  }
+  return out;
+}
+
+/** Titles take no emphasis markers. */
+const plain = (text: string) => cleanText(text.replace(/\*\*/g, ""));
+
+/** A paragraph as a row of words that wraps; the emphasised words take the accent colour and a heavier weight. */
+function paragraph(text: string, size: number, color: string, accent: string, marginTop = 0): Node {
+  const words = richWords(cleanText(text));
+  return h(
+    "div",
+    { flexWrap: "wrap", marginTop, fontSize: size, lineHeight: 1.32 },
+    words.map((w, i) => h("div", { color: w.strong ? accent : color, fontWeight: w.strong ? 800 : 400, marginRight: words[i + 1]?.glued ? 0 : Math.round(size * 0.27) }, w.word)),
+  );
+}
+
+const paragraphs = (body: string, size: number, color: string, accent: string, gap = 26): Node[] =>
+  body.split("\n").map((p) => p.trim()).filter(Boolean).map((p, i) => paragraph(p, size, color, accent, i === 0 ? 0 : gap));
+
 export function slideTree(slide: Slide, index: number, total: number, brand: Brand, photo?: string): Node {
   const c = palette(brand);
-  const title = cleanText(slide.title);
+  const title = plain(slide.title);
   const body = slide.body ? cleanText(slide.body) : "";
+  const takeaway = slide.takeaway ? cleanText(slide.takeaway) : "";
   const pad = 88;
   const onPhoto = slide.kind === "cover" && photo !== undefined;
   const text = onPhoto ? "#FFFFFF" : c.text;
@@ -98,18 +137,25 @@ export function slideTree(slide: Slide, index: number, total: number, brand: Bra
       middle = h("div", { flexDirection: "column", justifyContent: "center", flex: 1 }, [
         h("div", { width: 120, height: 12, background: brand.accent, borderRadius: 6, marginBottom: 48 }),
         h("div", { fontSize: fit(title, [[28, 128], [48, 108], [72, 92], [110, 78], [160, 66]]), fontWeight: 800, color: text, lineHeight: 1.06, letterSpacing: -2 }, title),
-        ...(body ? [h("div", { fontSize: 42, color: muted, marginTop: 44, lineHeight: 1.3 }, body)] : []),
+        ...(body ? [h("div", { flexDirection: "column", marginTop: 44 }, paragraphs(body, 42, muted, brand.accent))] : []),
       ]);
       break;
     case "point":
       middle = h("div", { flexDirection: "column", justifyContent: "center", flex: 1 }, [
         h("div", { fontSize: 120, fontWeight: 800, color: brand.accent, lineHeight: 1, marginBottom: 28 }, String(index).padStart(2, "0")),
         h("div", { fontSize: fit(title, [[30, 84], [60, 70], [100, 58]]), fontWeight: 800, color: text, lineHeight: 1.1, letterSpacing: -1 }, title),
-        ...(body ? [h("div", { fontSize: fit(body, [[140, 46], [260, 40], [400, 35]]), color: muted, marginTop: 36, lineHeight: 1.35 }, body)] : []),
+        ...(body ? [h("div", { flexDirection: "column", marginTop: 34 }, paragraphs(body, fit(body + takeaway, [[200, 44], [330, 38], [470, 33], [650, 29]]), muted, brand.accent))] : []),
+        ...(takeaway
+          ? [
+              h("div", { flexDirection: "column", marginTop: 34, padding: "26px 34px", borderRadius: 24, background: brand.theme === "dark" ? "rgba(255,255,255,0.07)" : "rgba(16,21,28,0.06)", borderLeft: `10px solid ${brand.accent}` }, [
+                paragraph(`**${cleanText(slide.takeawayLabel ?? "Ta med dig:").replace(/\*/g, "")}** ${takeaway}`, fit(body + takeaway, [[200, 42], [330, 36], [470, 32], [650, 28]]), text, brand.accent),
+              ]),
+            ]
+          : []),
       ]);
       break;
     case "list": {
-      const items = (slide.items ?? []).map(cleanText).filter(Boolean).slice(0, 8);
+      const items = (slide.items ?? []).map((i) => plain(i)).filter(Boolean).slice(0, 8);
       const size = fit(items.join(" "), [[120, 52], [200, 46], [320, 40]]);
       middle = h("div", { flexDirection: "column", justifyContent: "center", flex: 1 }, [
         h("div", { fontSize: fit(title, [[30, 68], [60, 58]]), fontWeight: 800, color: text, lineHeight: 1.1, marginBottom: 44, letterSpacing: -1 }, title),
@@ -125,14 +171,14 @@ export function slideTree(slide: Slide, index: number, total: number, brand: Bra
     case "statement":
       middle = h("div", { flexDirection: "column", justifyContent: "center", flex: 1 }, [
         h("div", { fontSize: fit(title, [[40, 112], [80, 92], [140, 74], [220, 60]]), fontWeight: 800, color: text, lineHeight: 1.1, letterSpacing: -2 }, title),
-        ...(body ? [h("div", { fontSize: 40, color: muted, marginTop: 40, lineHeight: 1.35 }, body)] : []),
+        ...(body ? [h("div", { flexDirection: "column", marginTop: 40 }, paragraphs(body, 40, muted, brand.accent))] : []),
       ]);
       break;
     case "cta": {
       const keyword = cleanText(slide.keyword ?? "").toUpperCase();
       middle = h("div", { flexDirection: "column", justifyContent: "center", flex: 1 }, [
         h("div", { fontSize: fit(title, [[40, 96], [80, 80], [140, 66]]), fontWeight: 800, color: text, lineHeight: 1.08, letterSpacing: -1.5 }, title),
-        ...(body ? [h("div", { fontSize: 42, color: muted, marginTop: 36, lineHeight: 1.3 }, body)] : []),
+        ...(body ? [h("div", { flexDirection: "column", marginTop: 36 }, paragraphs(body, 42, muted, brand.accent))] : []),
         ...(keyword
           ? [
               h("div", { marginTop: 64 }, [

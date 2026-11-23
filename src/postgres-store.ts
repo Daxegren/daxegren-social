@@ -59,7 +59,7 @@ function toBrief(r: Row): ContentBrief {
     assetIds: r.asset_ids,
     channels: opt(r.channels),
     memoId: opt(r.memo_id),
-    format: r.format === "carousel" ? "carousel" : undefined,
+    format: r.format === "carousel" || r.format === "reel" ? r.format : undefined,
     ctaKeyword: opt(r.cta_keyword),
     status: r.status,
     error: opt(r.error),
@@ -75,6 +75,7 @@ function toMemo(r: Row): Memo {
     driveFileId: opt(r.drive_file_id),
     name: r.name,
     transcript: opt(r.transcript),
+    segments: opt(r.segments),
     status: r.status,
     error: opt(r.error),
     attempts: r.attempts,
@@ -246,11 +247,11 @@ export class PostgresStore implements Store {
 
   async putMemo(m: Memo) {
     await this.sql.query(
-      `insert into social_memos (id, source, drive_file_id, name, transcript, status, error, attempts, idea_count, claimed_at, created_at)
-       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-       on conflict (id) do update set transcript = excluded.transcript, status = excluded.status, error = excluded.error,
-         attempts = excluded.attempts, idea_count = excluded.idea_count, claimed_at = excluded.claimed_at`,
-      [m.id, m.source, m.driveFileId ?? null, m.name, m.transcript ?? null, m.status, m.error ?? null, m.attempts, m.ideaCount, m.claimedAt ?? null, m.createdAt],
+      `insert into social_memos (id, source, drive_file_id, name, transcript, segments, status, error, attempts, idea_count, claimed_at, created_at)
+       values ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, $11, $12)
+       on conflict (id) do update set transcript = excluded.transcript, segments = excluded.segments, status = excluded.status,
+         error = excluded.error, attempts = excluded.attempts, idea_count = excluded.idea_count, claimed_at = excluded.claimed_at`,
+      [m.id, m.source, m.driveFileId ?? null, m.name, m.transcript ?? null, m.segments ? JSON.stringify(m.segments) : null, m.status, m.error ?? null, m.attempts, m.ideaCount, m.claimedAt ?? null, m.createdAt],
     );
   }
 

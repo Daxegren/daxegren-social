@@ -3,8 +3,11 @@ import { CHANNEL_LABELS, CHANNEL_SPECS, validateVariant } from "./channels.js";
 import { buildCarousel } from "./carousel/build.js";
 import type { Brand } from "./carousel/render.js";
 import { DEFAULT_SLIDES, MAX_SLIDES, MIN_SLIDES, type CarouselWriter } from "./carousel/write.js";
-import type { Asset, AssetKind, Channel, ContentBrief, MediaJob, Memo, PostVariant, PublishedPost } from "./domain.js";
-import { DEFAULT_MEMO_IDEAS, MAX_MEMO_IDEAS, type MemoPlanner } from "./memo.js";
+import type { Asset, AssetKind, Channel, ContentBrief, MediaJob, Memo, PostVariant, PublishedPost, TranscriptSegment } from "./domain.js";
+import { DEFAULT_MEMO_IDEAS, MAX_MEMO_IDEAS, type MemoIdea, type MemoPlanner } from "./memo.js";
+import { captionChunks, reelCut, snapSegments } from "./reel/align.js";
+import type { ReelAudio, ReelRenderer } from "./reel/ffmpeg.js";
+import { DEFAULT_BRAND } from "./carousel/render.js";
 import type { Transcriber } from "./transcribe.js";
 import { AdapterError, NotSupportedError, type ChannelAdapter, type FetchLike, type RemotePost } from "./adapters/types.js";
 import type { ContentGenerator, GeneratedVariant } from "./generate.js";
@@ -46,7 +49,13 @@ export interface EngineConfig {
   memoChannels?: Channel[];
   /** Ideas per memo, 1 to 6. Default 3. */
   memoMaxIdeas?: number;
-  /** Colours and handle drawn on carousel pages. */
+  /** Makes Reels (vertical video with the owner's voice) from voice memos. Needs `mediaStorage`, a timed transcript and the recording. */
+  reelRenderer?: ReelRenderer;
+  /** Longest Reel in seconds. Default 60. */
+  reelMaxSeconds?: number;
+  /** Fetches a memo's recording again (it is not kept). Memos transcribed in this same run need no fetching. */
+  memoAudio?: (memo: Memo) => Promise<ReelAudio | undefined>;
+  /** Colours and handle drawn on carousel pages and Reels. */
   brand?: Brand;
   /** Pause between safe retries of a video submission. Injectable for tests. */
   sleep?: (ms: number) => Promise<void>;
@@ -72,6 +81,7 @@ export class ContentEngine {
   private readonly store: Store;
   private readonly adapters: Partial<Record<Channel, ChannelAdapter>>;
   private readonly now: () => Date;
+  private readonly audioCache = new Map<string, ReelAudio>();
 
   constructor(private readonly cfg: EngineConfig) {
     this.store = cfg.store;
@@ -424,7 +434,7 @@ export class ContentEngine {
   }
 
   /** Generate one variant per channel. Lands in the review queue unless the channel is in `autoApprove`. */
-  async proposeVariants(briefId: string, channels: Channel[]): Promise<PostVariant[]> {
+  async proposeVariants(briefId: string, channels: Channel[], opts: { assetIds?: string[] } = {}): Promise<PostVariant[]> {
     const brief = await this.store.getBrief(briefId);
     if (!brief) throw new Error(`unknown brief ${briefId}`);
 
@@ -432,7 +442,7 @@ export class ContentEngine {
     const examples = await this.pickExamples(brief, insights);
 
     const generated = await this.cfg.generator.generate({ brief, channels, insights, examples, assets });
-    return this.saveDrafts(briefId, generated, insights);
+    return this.saveDrafts(briefId, opts.assetIds ? generated.map((g) => ({ ...g, assetIds: opts.assetIds! })) : generated, insights);
   }
 
   /** Stores generated variants as drafts, or schedules them right away for channels in `autoApprove` when they are valid. */
@@ -574,14 +584,25 @@ export class ContentEngine {
     const transcriber = this.cfg.transcriber;
     if (!transcriber) throw new Error("no transcriber is configured (GEMINI_API_KEY is needed to turn recordings into text)");
     let transcript: string;
+    let segments: TranscriptSegment[] = [];
     try {
-      transcript = (await transcriber.transcribe({ bytes: input.bytes, mimeType: input.mimeType, name: input.name })).trim();
+      const audio = { bytes: input.bytes, mimeType: input.mimeType, name: input.name };
+      if (this.cfg.reelRenderer && transcriber.transcribeDetailed) {
+        const detailed = await transcriber.transcribeDetailed(audio);
+        transcript = detailed.text.trim();
+        segments = detailed.segments;
+      } else {
+        transcript = (await transcriber.transcribe(audio)).trim();
+      }
     } catch (err) {
       if (!(err instanceof AdapterError) || !err.permanent) throw err;
       return this.saveMemo({ source: input.driveFileId ? "drive" : "cli", driveFileId: input.driveFileId, name: input.name, status: "failed", error: err.message.slice(0, 500) });
     }
     if (!transcript) return this.saveMemo({ source: input.driveFileId ? "drive" : "cli", driveFileId: input.driveFileId, name: input.name, status: "failed", error: "no speech was found in the recording" });
-    return this.saveMemo({ source: input.driveFileId ? "drive" : "cli", driveFileId: input.driveFileId, name: input.name, transcript, status: "transcribed" });
+    const memo = await this.saveMemo({ source: input.driveFileId ? "drive" : "cli", driveFileId: input.driveFileId, name: input.name, transcript, segments: segments.length > 0 ? segments : undefined, status: "transcribed" });
+    // Kept in memory for this run only, so a Reel can be made without fetching the recording again.
+    if (segments.length > 0) this.audioCache.set(memo.id, { bytes: input.bytes, mimeType: input.mimeType, name: input.name });
+    return memo;
   }
 
   /** A memo from text you already have (dictated, pasted or exported from a notes app). */
@@ -595,6 +616,59 @@ export class ContentEngine {
     const memo: Memo = { id: crypto.randomUUID(), attempts: 0, ideaCount: 0, createdAt: this.now().toISOString(), ...m };
     await this.store.putMemo(memo);
     return memo;
+  }
+
+  private async audioFor(memo: Memo): Promise<ReelAudio | undefined> {
+    return this.audioCache.get(memo.id) ?? (await this.cfg.memoAudio?.(memo));
+  }
+
+  /**
+   * Makes a Reel of a stretch of a voice memo: the owner's own voice, a headline, captions and key-point cards, on a sound
+   * wave or on the brief's photos. Stores the video as a public file and drafts a caption for every channel that takes video.
+   */
+  async createReel(briefId: string, memo: Memo, plan: Pick<MemoIdea, "hook" | "from" | "to" | "cards">, channels: Channel[]): Promise<PostVariant[]> {
+    const renderer = this.cfg.reelRenderer;
+    if (!renderer) throw new Error("no Reel renderer is configured");
+    const storage = this.cfg.mediaStorage;
+    if (!storage) throw new Error("Reels need public storage (SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY)");
+    if (!memo.segments?.length) throw new Error("the memo has no timed transcript");
+    const brief = await this.store.getBrief(briefId);
+    if (!brief) throw new Error(`unknown brief ${briefId}`);
+    const usable = channels.filter((c) => CHANNEL_SPECS[c].media.includes("video"));
+    if (usable.length === 0) throw new Error(`none of the channels takes video (${channels.map((c) => CHANNEL_LABELS[c]).join(", ")})`);
+    const audio = await this.audioFor(memo);
+    if (!audio) throw new Error("the recording is no longer available (it is fetched from Drive)");
+
+    const { duration, silences } = await renderer.analyse(audio);
+    const snapped = snapSegments(memo.segments, silences, duration);
+    const cut = reelCut(snapped, plan.from ?? 0, plan.to ?? 0, this.cfg.reelMaxSeconds ?? 60, duration);
+    if (!cut) throw new Error("the chosen stretch of the recording is out of range, too short or too long for a Reel");
+
+    // Each card shows from the segment where its point begins until the next card's, or the end.
+    const inCut = (plan.cards ?? []).filter((c) => c.at - 1 >= cut.from && c.at - 1 <= cut.to);
+    const cards = inCut.map((c, i) => ({ start: snapped[c.at - 1]!.start, end: inCut[i + 1] ? snapped[inCut[i + 1]!.at - 1]!.start : cut.end, title: c.title, body: c.body }));
+    const assets = await this.store.getAssets(brief.assetIds);
+    const photos = (await Promise.all(assets.filter((a) => a.kind === "image" && a.uri.startsWith("https://")).slice(0, 4).map((a) => this.fetchPhoto(a.uri)))).filter((p): p is { bytes: Uint8Array } => p !== undefined);
+
+    const mp4 = await renderer.render({ audio, start: cut.start, end: cut.end, hook: plan.hook ?? brief.idea.slice(0, 80), captions: captionChunks(cut.segments), cards, photos, brand: this.cfg.brand ?? DEFAULT_BRAND });
+    if (mp4.length > 45 * 1024 * 1024) throw new Error("the finished video is larger than 45 MB");
+    const run = crypto.randomUUID().slice(0, 8);
+    const uri = await storage.put(`reels/${briefId}/${run}.mp4`, mp4, "video/mp4");
+    const video = await this.saveAsset("video", "generated", uri, { source: "reel", memoId: memo.id, seconds: Math.round(cut.end - cut.start), from: cut.from + 1, to: cut.to + 1 });
+    await this.store.putBrief({ ...brief, assetIds: [...brief.assetIds, video.id] });
+    return this.proposeVariants(briefId, usable, { assetIds: [video.id] });
+  }
+
+  private async fetchPhoto(uri: string): Promise<{ bytes: Uint8Array } | undefined> {
+    try {
+      const res = await (this.cfg.fetch ?? fetch)(uri);
+      if (!res.ok) return undefined;
+      const bytes = new Uint8Array(await res.arrayBuffer());
+      const isImage = (bytes[0] === 0xff && bytes[1] === 0xd8) || (bytes[0] === 0x89 && bytes[1] === 0x50);
+      return isImage && bytes.length <= 8 * 1024 * 1024 ? { bytes } : undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   /**
@@ -618,13 +692,28 @@ export class ContentEngine {
 
       const insights = await this.analyze(channels);
       const examples = await this.pickExamples({ id: "memo", idea: claimed.transcript.slice(0, 300), sourcePostIds: [], assetIds: [], createdAt: claimed.createdAt }, insights);
-      const planned = await planner.plan({ transcript: claimed.transcript, maxIdeas, channels, examples });
+      const reelsPossible = Boolean(this.cfg.reelRenderer && this.cfg.mediaStorage && claimed.segments?.length && (this.audioCache.has(claimed.id) || this.cfg.memoAudio));
+      const maxReelSeconds = this.cfg.reelMaxSeconds ?? 60;
+      const planned = await planner.plan({ transcript: claimed.transcript, maxIdeas, channels, examples, segments: reelsPossible ? claimed.segments : undefined, allowReels: reelsPossible, maxReelSeconds });
 
       for (const idea of planned) {
         const carousel = idea.format === "carousel" && this.cfg.carouselWriter && this.cfg.mediaStorage;
-        const brief = await this.createBrief({ idea: idea.idea, angle: idea.angle, format: carousel ? "carousel" : "post", ctaKeyword: carousel ? idea.keyword : undefined, memoId: claimed.id });
+        const reel = idea.format === "reel" && reelsPossible;
+        const brief = await this.createBrief({ idea: idea.idea, angle: idea.angle, format: reel ? "reel" : carousel ? "carousel" : "post", ctaKeyword: carousel ? idea.keyword : undefined, memoId: claimed.id });
         try {
-          const made = carousel ? await this.createCarousel(brief.id, channels) : await this.proposeVariants(brief.id, channels);
+          let made: PostVariant[];
+          if (reel) {
+            try {
+              made = await this.createReel(brief.id, claimed, idea, channels);
+            } catch (err) {
+              // A Reel that cannot be made is not lost: its idea becomes an ordinary post, and the note says why.
+              errors.push(`${idea.title}: Reel kunde inte skapas (${(err as Error).message.slice(0, 160)}), gjorde ett inlägg i stället`);
+              await this.store.putBrief({ ...brief, format: "post" });
+              made = await this.proposeVariants(brief.id, channels);
+            }
+          } else {
+            made = carousel ? await this.createCarousel(brief.id, channels) : await this.proposeVariants(brief.id, channels);
+          }
           if (made.length === 0) throw new Error("the generator returned no drafts");
           drafts.push(...made);
           ideas++;

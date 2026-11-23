@@ -150,6 +150,7 @@ describe("requests and uploads from the app (RLS)", () => {
     expect(plain.rows).toHaveLength(1);
     expect((await db.query(`select format from social_briefs where id = '${(plain.rows[0] as { id: string }).id}'`)).rows).toEqual([{ format: "post" }]);
     await expect(as(ADMIN, () => db.query(`insert into social_briefs (idea, channels, status, format) values ('x', array['linkedin'], 'requested', 'podcast')`))).rejects.toThrow(/check/);
+    expect((await db.query(`insert into social_briefs (idea, channels, status, format) values ('x', array['linkedin'], 'ready', 'reel') returning format`)).rows).toEqual([{ format: "reel" }]);
     for (const keyword of ["two words", "x".repeat(31), "a;b", ""]) {
       await expect(as(ADMIN, () => db.query(`insert into social_briefs (idea, channels, status, format, cta_keyword) values ('x', array['linkedin'], 'requested', 'carousel', '${keyword}')`))).rejects.toThrow(/social_briefs_cta_keyword/);
     }

@@ -1,3 +1,5 @@
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import type { FetchLike } from "../adapters/types.js";
 import { PostgresStore, type SqlClient } from "../postgres-store.js";
 import { DEFAULT_MONTHLY_CAP_USD, monthStartIso } from "../media.js";
@@ -134,6 +136,16 @@ export async function runDoctor(deps: DoctorDeps): Promise<Check[]> {
     const drive = buildDrive(env, { fetch: f, now });
     const files = await drive!.listMedia();
     return ok("drive", `signed in as ${drive!.clientEmail}; ${files.length} photo/video file(s) found in the folder`);
+  });
+
+  await run("ffmpeg", async () => {
+    if (env.MEMO_REELS === "false") return skip("ffmpeg", "Reels are switched off (MEMO_REELS=false)");
+    try {
+      const { stdout } = await promisify(execFile)("ffmpeg", ["-version"], { timeout: 10_000 });
+      return ok("ffmpeg", `found (${stdout.split("\n")[0]?.slice(0, 40) ?? "ffmpeg"}); Reels can be made`);
+    } catch {
+      return warn("ffmpeg", "not found. Reels need it; the Voice memos workflow installs it. Without it a Reel idea becomes an ordinary post");
+    }
   });
 
   await run("anthropic", async () => {

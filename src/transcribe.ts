@@ -1,4 +1,5 @@
 import { AdapterError, type FetchLike } from "./adapters/types.js";
+import type { TranscriptSegment } from "./domain.js";
 
 export interface AudioInput {
   bytes: Uint8Array;
@@ -7,10 +8,18 @@ export interface AudioInput {
   name?: string;
 }
 
+export interface TimedTranscript {
+  text: string;
+  /** Timed stretches of speech, in order. Empty when the transcriber could not give timings. */
+  segments: TranscriptSegment[];
+}
+
 /** Speech to text. Swap implementations without touching the engine. */
 export interface Transcriber {
   /** The words that were spoken, in the spoken language. Empty when there was no speech. */
   transcribe(audio: AudioInput): Promise<string>;
+  /** The same, split into timed stretches of speech (needed for Reels). */
+  transcribeDetailed?(audio: AudioInput): Promise<TimedTranscript>;
 }
 
 /** Audio larger than this is not sent: the request limit is 20 MB in total and base64 adds a third. About 25 minutes. */
@@ -63,6 +72,61 @@ const PROMPT = `Transcribe this voice memo word for word.
 - Use normal punctuation and paragraphs.
 - If there is no speech, answer exactly: ${NO_SPEECH}`;
 
+const TIMED_PROMPT = `Transcribe this voice memo word for word, split into sentences or short phrases of about 3 to 12 seconds.
+- Write in the language that is spoken (usually Swedish). Do not translate.
+- Remove only filler sounds (eh, öh, ehm, mm) and words repeated by accident. Keep everything else, numbers as spoken.
+- Do not summarise, explain, correct or add anything. Do not label speakers.
+- For every phrase give \`start\`: the time the phrase begins, as MM:SS.s (minutes, seconds and one decimal), measured from the very start of the recording.
+- If there is no speech, return an empty list.`;
+
+const TIMED_SCHEMA = {
+  type: "object",
+  properties: {
+    segments: {
+      type: "array",
+      items: { type: "object", properties: { start: { type: "string" }, text: { type: "string" } }, required: ["start", "text"] },
+    },
+  },
+  required: ["segments"],
+};
+
+/** `1:05.5`, `01:05`, `1:02:03` or plain seconds → seconds; undefined when it is not a time. */
+export function parseTimestamp(value: unknown): number | undefined {
+  if (typeof value === "number") return Number.isFinite(value) && value >= 0 ? value : undefined;
+  if (typeof value !== "string") return undefined;
+  const parts = value.trim().split(":");
+  if (parts.length < 1 || parts.length > 3 || parts.some((p) => !/^\d+(\.\d+)?$/.test(p))) return undefined;
+  return parts.reduce((total, p) => total * 60 + Number(p), 0);
+}
+
+/**
+ * Reads the model's `{segments:[{start,text}]}` answer. Starts must not go backwards (a segment that does is dropped);
+ * each segment ends where the next begins. Returns undefined when nothing usable came back.
+ */
+export function parseTimedTranscript(raw: string): TimedTranscript | undefined {
+  let data: { segments?: unknown };
+  try {
+    const start = raw.indexOf("{");
+    const end = raw.lastIndexOf("}");
+    data = JSON.parse(raw.slice(start, end + 1));
+  } catch {
+    return undefined;
+  }
+  if (!Array.isArray(data.segments)) return undefined;
+  const starts: Array<{ start: number; text: string }> = [];
+  let last = -1;
+  for (const s of data.segments as Array<Record<string, unknown>>) {
+    const start = parseTimestamp(s.start);
+    const text = typeof s.text === "string" ? s.text.trim() : "";
+    if (start === undefined || !text || start < last) continue;
+    starts.push({ start, text });
+    last = start;
+  }
+  if (starts.length === 0) return undefined;
+  const segments = starts.map((s, i) => ({ start: s.start, end: starts[i + 1]?.start ?? s.start + Math.max(2, Math.ceil(s.text.length / 14)), text: s.text }));
+  return { text: segments.map((s) => s.text).join(" "), segments };
+}
+
 interface Block {
   type?: string;
   text?: string;
@@ -86,6 +150,24 @@ export class GeminiTranscriber implements Transcriber {
   }
 
   async transcribe(audio: AudioInput): Promise<string> {
+    const said = await this.request(audio, PROMPT);
+    return said === NO_SPEECH ? "" : said;
+  }
+
+  /**
+   * The transcript with timings: speech split into sentences or short phrases, each with the time it begins. Gemini's
+   * timestamps are only approximate (they come from the model, not from an alignment tool), so the Reel renderer snaps
+   * them to the pauses it hears in the audio. If the answer cannot be read as timings, the plain transcript is returned
+   * without segments instead of failing.
+   */
+  async transcribeDetailed(audio: AudioInput): Promise<TimedTranscript> {
+    const said = await this.request(audio, TIMED_PROMPT, { type: "text", mime_type: "application/json", schema: TIMED_SCHEMA });
+    const parsed = parseTimedTranscript(said);
+    if (parsed) return parsed;
+    return { text: await this.transcribe(audio), segments: [] };
+  }
+
+  private async request(audio: AudioInput, prompt: string, responseFormat?: unknown): Promise<string> {
     const mime = audioMime(audio.mimeType, audio.name);
     if (!mime) throw new AdapterError(`${audio.mimeType || "this"} audio format is not supported; share the memo as m4a or mp3`, true);
     if (audio.bytes.length > MAX_AUDIO_BYTES) throw new AdapterError(`the recording is larger than ${MAX_AUDIO_BYTES / 1024 / 1024} MB (about 25 minutes); split it`, true);
@@ -98,9 +180,10 @@ export class GeminiTranscriber implements Transcriber {
         body: JSON.stringify({
           model: this.model,
           input: [
-            { type: "text", text: PROMPT },
+            { type: "text", text: prompt },
             { type: "audio", data: Buffer.from(audio.bytes).toString("base64"), mime_type: mime },
           ],
+          ...(responseFormat ? { response_format: responseFormat } : {}),
         }),
       });
     } catch (err) {
@@ -121,7 +204,7 @@ export class GeminiTranscriber implements Transcriber {
       .join("\n")
       .trim();
     if (!said) throw new AdapterError("Gemini returned no text for the recording", true);
-    return said === NO_SPEECH ? "" : said;
+    return said;
   }
 
   private scrub(text: string): string {

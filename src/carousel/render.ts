@@ -58,8 +58,8 @@ export function fit(text: string, steps: Array<[maxChars: number, size: number]>
   return steps[steps.length - 1]![1];
 }
 
-type Node = { type: string; props: Record<string, unknown> };
-const h = (type: string, style: Record<string, unknown>, children?: unknown, extra: Record<string, unknown> = {}): Node => ({
+export type Node = { type: string; props: Record<string, unknown> };
+export const h = (type: string, style: Record<string, unknown>, children?: unknown, extra: Record<string, unknown> = {}): Node => ({
   type,
   props: { style: { display: "flex", boxSizing: "border-box", ...style }, ...extra, ...(children === undefined ? {} : { children }) },
 });
@@ -169,6 +169,12 @@ export async function renderSlide(slide: Slide, index: number, total: number, br
   const svg = await satori(slideTree(slide, index, total, brand, photo) as never, { width: SLIDE_WIDTH, height: SLIDE_HEIGHT, fonts: loadFonts() });
   const image = new Resvg(svg, { fitTo: { mode: "width", value: SLIDE_WIDTH } }).render();
   return new Uint8Array(jpeg.encode({ data: image.pixels, width: image.width, height: image.height }, 90).data);
+}
+
+/** Draws any element tree to a PNG, keeping transparency where the tree paints nothing. */
+export async function treeToPng(tree: Node, width: number, height: number): Promise<Uint8Array> {
+  const svg = await satori(tree as never, { width, height, fonts: loadFonts() });
+  return new Uint8Array(new Resvg(svg, { fitTo: { mode: "width", value: width } }).render().asPng());
 }
 
 /** `#rrggbb` only: the value ends up inside a drawing instruction, so nothing else is let through. */

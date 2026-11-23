@@ -23,6 +23,11 @@ Recordings over about 25 minutes (14 MB) are skipped too; split them.
 - Ideas and drafts: a few Claude calls, cents.
 - Only the **transcript** is stored (table `social_memos`, readable only by signed-in reviewers). The audio stays where you put it (Drive). Delete the Drive file whenever you like.
 
+## Reels
+
+If the engine finds a stretch of the memo that works as a spoken clip, it makes a **Reel** of it: your own voice, a
+headline, captions and key-point cards, as a vertical video. See [REELS.md](REELS.md).
+
 ## What it does with what you said
 
 - It picks at most three distinct points (`MEMO_MAX_IDEAS`, 1–6). If the memo holds one good idea you get one; if it

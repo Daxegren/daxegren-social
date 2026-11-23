@@ -55,7 +55,7 @@ describe.each(makers)("Store contract: %s", (_name, make) => {
 
   it("memos: round-trip, found by Drive file, listed by status, atomic claim; briefs remember their memo", async () => {
     const memo = (over: Partial<Memo> = {}): Memo => ({ id: uuid(), source: "drive", name: "Ny inspelning", transcript: "text", status: "transcribed", attempts: 0, ideaCount: 0, createdAt: T, ...over });
-    const a = memo({ driveFileId: "drive-a" });
+    const a = memo({ driveFileId: "drive-a", segments: [{ start: 0, end: 6.5, text: "Hej" }, { start: 6.5, end: 12, text: "där" }] });
     const b = memo({ source: "cli", status: "planned", ideaCount: 2, error: "note" });
     await store.putMemo(a);
     await store.putMemo(b);
@@ -70,9 +70,9 @@ describe.each(makers)("Store contract: %s", (_name, make) => {
     expect(claims.filter(Boolean)).toHaveLength(1);
     expect(claims.find(Boolean)!.claimedAt).toBeDefined();
 
-    const fromMemo: ContentBrief = { ...brief(), memoId: a.id };
+    const fromMemo: ContentBrief = { ...brief(), memoId: a.id, format: "reel" };
     await store.putBrief(fromMemo);
-    expect((await store.getBrief(fromMemo.id))!.memoId).toBe(a.id);
+    expect(await store.getBrief(fromMemo.id)).toMatchObject({ memoId: a.id, format: "reel" });
   });
 
   it("briefs: requests round-trip with channels and status; list by status; atomic claim", async () => {

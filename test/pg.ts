@@ -39,6 +39,7 @@ export async function freshDb() {
     await db.exec(migration("0006_recovery.sql"));
     await db.exec(migration("0007_carousels.sql"));
     await db.exec(migration("0008_memos.sql"));
+    await db.exec(migration("0009_memo_segments.sql"));
     return db;
   })();
   const db = await shared;

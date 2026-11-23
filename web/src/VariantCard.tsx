@@ -38,7 +38,7 @@ export function VariantCard({ variant, assets, busy, onApprove, onReject }: Prop
               {a.kind === "image" ? (
                 <img src={a.uri} alt="" className="h-24 w-24 rounded object-cover" />
               ) : (
-                <video src={a.uri} className="h-24 w-24 rounded object-cover" muted preload="metadata" />
+                <video src={a.uri} className="max-h-80 max-w-full rounded" controls playsInline preload="metadata" aria-label="Förhandsvisa video" />
               )}
               <span className="absolute bottom-1 left-1 rounded bg-black/60 px-1 text-[10px] text-white">
                 {a.origin === "captured" ? "egen" : "genererad"}

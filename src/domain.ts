@@ -66,8 +66,8 @@ export interface ContentBrief {
   assetIds: string[];
   /** Channels to draft for. Set on requests. */
   channels?: Channel[];
-  /** `carousel` = swipeable pages of text drawn by the engine. Absent means an ordinary post. */
-  format?: "post" | "carousel";
+  /** `carousel` = swipeable pages of text drawn by the engine; `reel` = a vertical video with the owner's own voice, made from a voice memo. Absent means an ordinary post. */
+  format?: "post" | "carousel" | "reel";
   /** Carousel only: the word readers are asked to comment on the last page. */
   ctaKeyword?: string;
   /** The voice memo this idea came from. */
@@ -134,6 +134,13 @@ export interface MediaJob {
 /** `planning` = a worker is turning the transcript into ideas and drafts. `planned` = done. */
 export type MemoStatus = "transcribed" | "planning" | "planned" | "failed";
 
+/** A stretch of speech with its position in the recording, in seconds. */
+export interface TranscriptSegment {
+  start: number;
+  end: number;
+  text: string;
+}
+
 /** A voice memo (or pasted text) that ideas and drafts are made from. Keeps the transcript, never the audio. */
 export interface Memo {
   id: string;
@@ -142,6 +149,8 @@ export interface Memo {
   driveFileId?: string;
   name: string;
   transcript?: string;
+  /** The transcript split into timed stretches of speech. Present when the recording was transcribed with timings; needed for Reels. */
+  segments?: TranscriptSegment[];
   status: MemoStatus;
   error?: string;
   /** How many times drafting from the transcript has been tried. */

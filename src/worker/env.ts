@@ -13,7 +13,8 @@ import { brandFromEnv } from "../carousel/build.js";
 import { ClaudeCarouselWriter } from "../carousel/write.js";
 import { ClaudeContentGenerator, type ContentGenerator } from "../generate.js";
 import { ClaudeMemoPlanner } from "../memo.js";
-import { GeminiTranscriber } from "../transcribe.js";
+import { FfmpegReelRenderer } from "../reel/ffmpeg.js";
+import { audioMime, GeminiTranscriber } from "../transcribe.js";
 import { WebhookNotifier, type Notifier, type WebhookFormat } from "../notify.js";
 import type { Store } from "../store.js";
 
@@ -103,6 +104,17 @@ export function buildEngine(env: Env, store: Store, opts: { fetch?: FetchLike; n
   const memoIdeas = env.MEMO_MAX_IDEAS ? Number(env.MEMO_MAX_IDEAS) : undefined;
   if (memoIdeas !== undefined && !(Number.isInteger(memoIdeas) && memoIdeas >= 1 && memoIdeas <= 6)) throw new Error(`MEMO_MAX_IDEAS must be a whole number from 1 to 6, got "${env.MEMO_MAX_IDEAS}"`);
 
+  const reelSeconds = env.REEL_MAX_SECONDS ? Number(env.REEL_MAX_SECONDS) : undefined;
+  if (reelSeconds !== undefined && !(Number.isInteger(reelSeconds) && reelSeconds >= 10 && reelSeconds <= 180)) throw new Error(`REEL_MAX_SECONDS must be a whole number from 10 to 180, got "${env.REEL_MAX_SECONDS}"`);
+
+  // A memo's recording is not kept; a Reel fetches it from Drive again when it is made later than the transcription.
+  let drive: ReturnType<typeof buildDrive>;
+  try {
+    drive = buildDrive(env, { fetch: opts.fetch, now: opts.now });
+  } catch {
+    drive = undefined; // a broken Drive setup is reported by `doctor` and `drive-sync`, and must not stop publishing
+  }
+
   const formats: WebhookFormat[] = ["ntfy", "slack", "discord", "json"];
   if (env.NOTIFY_FORMAT && !formats.includes(env.NOTIFY_FORMAT as WebhookFormat)) {
     throw new Error(`NOTIFY_FORMAT must be one of ${formats.join(", ")}, got "${env.NOTIFY_FORMAT}"`);
@@ -119,6 +131,11 @@ export function buildEngine(env: Env, store: Store, opts: { fetch?: FetchLike; n
       memoPlanner: env.ANTHROPIC_API_KEY ? new ClaudeMemoPlanner({ apiKey: env.ANTHROPIC_API_KEY, model: env.CLAUDE_MODEL, fetch: opts.fetch }) : undefined,
       memoChannels: memoChannels(env),
       memoMaxIdeas: env.MEMO_MAX_IDEAS ? Number(env.MEMO_MAX_IDEAS) : undefined,
+      reelRenderer: env.MEMO_REELS === "false" ? undefined : new FfmpegReelRenderer(),
+      reelMaxSeconds: reelSeconds,
+      memoAudio: drive
+        ? async (memo) => (memo.driveFileId ? { bytes: await drive!.download({ id: memo.driveFileId }), mimeType: audioMime("", memo.name) ?? "audio/m4a", name: memo.name } : undefined)
+        : undefined,
       carouselWriter: env.ANTHROPIC_API_KEY ? new ClaudeCarouselWriter({ apiKey: env.ANTHROPIC_API_KEY, model: env.CLAUDE_MODEL, fetch: opts.fetch }) : undefined,
       brand: brandFromEnv(env),
       autoApprove,
